@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"golang-geoip/internal/config"
-	"golang-geoip/internal/geoip"
-	"golang-geoip/internal/handlers"
-	"golang-geoip/internal/types"
+	"geoip-server/internal/config"
+	"geoip-server/internal/geoip"
+	"geoip-server/internal/handlers"
+	"geoip-server/internal/types"
 
 	"github.com/sirupsen/logrus"
 )

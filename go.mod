@@ -1,4 +1,4 @@
-module golang-geoip
+module geoip-server
 
 go 1.24
 

@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"golang-geoip/internal/types"
+	"geoip-server/internal/types"
 
 	"github.com/sirupsen/logrus"
 )

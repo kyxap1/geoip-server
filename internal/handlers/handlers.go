@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"golang-geoip/internal/geoip"
-	"golang-geoip/internal/types"
+	"geoip-server/internal/geoip"
+	"geoip-server/internal/types"
 
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"

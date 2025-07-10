@@ -2,7 +2,7 @@ package cache
 
 import (
 	"fmt"
-	"golang-geoip/internal/types"
+	"geoip-server/internal/types"
 	"sync"
 	"testing"
 	"time"

@@ -122,6 +122,9 @@ jobs:
       with:
         context: .
         push: false
+        build-args:
+          # we're using variable DATE as docker build cache breaker
+          DATE: "${{ steps.version.outputs.unique_version }}"
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
         cache-from: type=gha

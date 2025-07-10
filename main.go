@@ -16,10 +16,10 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
-	"golang-geoip/internal/config"
-	"golang-geoip/internal/geoip"
-	"golang-geoip/internal/handlers"
-	tlsmanager "golang-geoip/internal/tls"
+	"geoip-server/internal/config"
+	"geoip-server/internal/geoip"
+	"geoip-server/internal/handlers"
+	tlsmanager "geoip-server/internal/tls"
 )
 
 var (

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"golang-geoip/internal/types"
+	"geoip-server/internal/types"
 
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"

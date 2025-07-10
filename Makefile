@@ -5,8 +5,8 @@
 
 # Build the application
 build:
-	@echo "Building golang-geoip..."
-	@go build -o golang-geoip .
+	@echo "Building geoip-server..."
+	@go build -o geoip-server .
 
 # Run unit tests only (internal packages)
 test-unit:
@@ -57,7 +57,7 @@ test-bench:
 # Clean build artifacts and coverage files
 clean:
 	@echo "Cleaning up..."
-	@rm -f golang-geoip coverage*.out coverage*.html
+	@rm -f geoip-server coverage*.out coverage*.html
 
 # Show help
 help:

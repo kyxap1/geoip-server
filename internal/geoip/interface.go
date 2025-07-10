@@ -1,6 +1,6 @@
 package geoip
 
-import "golang-geoip/internal/types"
+import "geoip-server/internal/types"
 
 // DatabaseManagerInterface defines the interface for GeoIP database operations
 type DatabaseManagerInterface interface {

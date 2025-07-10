@@ -13,8 +13,8 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
-	"golang-geoip/internal/config"
-	"golang-geoip/internal/geoip"
+	"geoip-server/internal/config"
+	"geoip-server/internal/geoip"
 )
 
 func TestMaskLicenseKey(t *testing.T) {

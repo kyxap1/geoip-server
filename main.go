@@ -66,7 +66,7 @@ func main() {
 	}
 
 	// Add CLI flags
-	rootCmd.PersistentFlags().IntVarP(&cfg.Port, "port", "p", cfg.Port, "HTTP port to listen on")
+	rootCmd.PersistentFlags().IntVarP(&cfg.Port, "http-port", "p", cfg.Port, "HTTP port to listen on")
 	rootCmd.PersistentFlags().IntVar(&cfg.HTTPSPort, "https-port", cfg.HTTPSPort, "HTTPS port to listen on")
 	rootCmd.PersistentFlags().BoolVar(&cfg.EnableTLS, "enable-tls", cfg.EnableTLS, "Enable TLS/HTTPS")
 	rootCmd.PersistentFlags().StringVar(&cfg.CertFile, "cert-file", cfg.CertFile, "Path to TLS certificate file")

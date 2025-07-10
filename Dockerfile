@@ -51,13 +51,13 @@ EXPOSE 80 443
 # Set environment variables
 ENV GIN_MODE=release
 ENV LOG_LEVEL=info
-ENV PORT=80
+ENV HTTP_PORT=80
 ENV HTTPS_PORT=443
 ENV DB_PATH=/app/data
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:$PORT/health || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://localhost:$HTTP_PORT/health || exit 1
 
 # run dist upgrade
 ARG DATE

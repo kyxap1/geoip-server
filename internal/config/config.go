@@ -39,7 +39,7 @@ type Config struct {
 // LoadConfig loads configuration from environment variables
 func LoadConfig() *Config {
 	cfg := &Config{
-		Port:            getEnvInt("PORT", 80),
+		Port:            getEnvInt("HTTP_PORT", 80),
 		HTTPSPort:       getEnvInt("HTTPS_PORT", 443),
 		EnableTLS:       getEnvBool("ENABLE_TLS", false),
 		CertFile:        getEnvStr("CERT_FILE", ""),

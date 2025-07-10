@@ -52,7 +52,7 @@ func TestLoadConfig_WithEnvironmentVariables(t *testing.T) {
 
 	// Set test environment variables
 	envVars := map[string]string{
-		"PORT":              "8080",
+		"HTTP_PORT":         "8080",
 		"HTTPS_PORT":        "8443",
 		"ENABLE_TLS":        "true",
 		"CERT_FILE":         "/custom/cert.pem",
@@ -455,7 +455,7 @@ func TestConfigStruct(t *testing.T) {
 // Helper function to clear all config-related environment variables
 func clearConfigEnvVars() {
 	envVars := []string{
-		"PORT", "HTTPS_PORT", "ENABLE_TLS", "CERT_FILE", "KEY_FILE", "CERT_PATH",
+		"HTTP_PORT", "HTTPS_PORT", "ENABLE_TLS", "CERT_FILE", "KEY_FILE", "CERT_PATH",
 		"DB_PATH", "UPDATE_INTERVAL", "AUTO_UPDATE", "MAXMIND_LICENSE",
 		"CACHE_ENABLED", "CACHE_TTL", "CACHE_MAX_ENTRIES", "LOG_LEVEL",
 		"GENERATE_CERTS", "CERT_VALID_DAYS", "CERT_HOSTS",

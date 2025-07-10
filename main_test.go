@@ -202,129 +202,116 @@ func TestGracefulShutdown(t *testing.T) {
 }
 
 // Test CLI commands
-func TestCLICommands(t *testing.T) {
-	// Save original config and restore after test
+// Helper function to setup CLI test environment
+func setupCLITestConfig(t *testing.T) (*config.Config, func()) {
 	originalCfg := cfg
-	defer func() {
-		cfg = originalCfg
-	}()
-
-	// Create test config
 	cfg = &config.Config{
 		MaxMindLicense: "test_license_key_123456789abc",
 		DBPath:         t.TempDir(),
 		LogLevel:       "error", // Suppress logs during tests
 	}
+	return cfg, func() { cfg = originalCfg }
+}
 
-	t.Run("Update command with license", func(t *testing.T) {
+// Helper function to capture command output
+func captureCommandOutput(t *testing.T, fn func() error) (string, error) {
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err := fn()
+
+	if cerr := w.Close(); cerr != nil {
+		t.Logf("Failed to close pipe writer: %v", cerr)
+	}
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+	return buf.String(), err
+}
+
+func TestCLI_UpdateCommandWithLicense(t *testing.T) {
+	_, cleanup := setupCLITestConfig(t)
+	defer cleanup()
+
+	cmd := &cobra.Command{}
+	err := updateCmd.RunE(cmd, []string{})
+	// This will fail because we don't have real MaxMind access, but it should
+	// get past the license check
+	if err == nil || err.Error() == "MaxMind license key is required" {
+		t.Error("Update command should pass license validation")
+	}
+}
+
+func TestCLI_UpdateCommandWithoutLicense(t *testing.T) {
+	testCfg, cleanup := setupCLITestConfig(t)
+	defer cleanup()
+
+	// Temporarily remove license
+	originalLicense := testCfg.MaxMindLicense
+	testCfg.MaxMindLicense = ""
+	defer func() {
+		testCfg.MaxMindLicense = originalLicense
+	}()
+
+	cmd := &cobra.Command{}
+	err := updateCmd.RunE(cmd, []string{})
+	if err == nil || err.Error() != "MaxMind license key is required" {
+		t.Errorf("Expected license error, got: %v", err)
+	}
+}
+
+func TestCLI_StatusCommand(t *testing.T) {
+	_, cleanup := setupCLITestConfig(t)
+	defer cleanup()
+
+	output, err := captureCommandOutput(t, func() error {
 		cmd := &cobra.Command{}
-		err := updateCmd.RunE(cmd, []string{})
-		// This will fail because we don't have real MaxMind access, but it should
-		// get past the license check
-		if err == nil || err.Error() == "MaxMind license key is required" {
-			t.Error("Update command should pass license validation")
-		}
+		return statusCmd.RunE(cmd, []string{})
 	})
 
-	t.Run("Update command without license", func(t *testing.T) {
-		// Temporarily remove license
-		originalLicense := cfg.MaxMindLicense
-		cfg.MaxMindLicense = ""
-		defer func() {
-			cfg.MaxMindLicense = originalLicense
-		}()
+	if err != nil {
+		t.Errorf("Status command failed: %v", err)
+	}
 
+	if !containsString(output, "Database Status:") {
+		t.Error("Status command should output database status header")
+	}
+}
+
+func TestCLI_RollbackCommand(t *testing.T) {
+	_, cleanup := setupCLITestConfig(t)
+	defer cleanup()
+
+	output, err := captureCommandOutput(t, func() error {
 		cmd := &cobra.Command{}
-		err := updateCmd.RunE(cmd, []string{})
-		if err == nil || err.Error() != "MaxMind license key is required" {
-			t.Errorf("Expected license error, got: %v", err)
-		}
+		return rollbackCmd.RunE(cmd, []string{})
 	})
 
-	t.Run("Status command", func(t *testing.T) {
-		// Capture stdout
-		old := os.Stdout
-		r, w, _ := os.Pipe()
-		os.Stdout = w
+	// This might fail due to no backups, but should not panic
+	// and should show proper error handling
+	if err == nil && !containsString(output, "rollback") {
+		t.Error("Rollback command should output rollback information")
+	}
+}
 
-		cmd := &cobra.Command{}
-		err := statusCmd.RunE(cmd, []string{})
+func TestCLI_VersionCommand(t *testing.T) {
+	_, cleanup := setupCLITestConfig(t)
+	defer cleanup()
 
-		// Restore stdout
-		if cerr := w.Close(); cerr != nil {
-			t.Logf("Failed to close pipe writer: %v", cerr)
-		}
-		os.Stdout = old
-
-		// Read captured output
-		var buf bytes.Buffer
-		_, _ = io.Copy(&buf, r)
-		output := buf.String()
-
-		if err != nil {
-			t.Errorf("Status command failed: %v", err)
-		}
-
-		if !containsString(output, "Database Status:") {
-			t.Error("Status command should output database status header")
-		}
-	})
-
-	t.Run("Rollback command", func(t *testing.T) {
-		// Capture stdout
-		old := os.Stdout
-		r, w, _ := os.Pipe()
-		os.Stdout = w
-
-		cmd := &cobra.Command{}
-		err := rollbackCmd.RunE(cmd, []string{})
-
-		// Restore stdout
-		if cerr := w.Close(); cerr != nil {
-			t.Logf("Failed to close pipe writer: %v", cerr)
-		}
-		os.Stdout = old
-
-		// This might fail due to no backups, but should not panic
-		// and should show proper error handling
-		if err == nil {
-			// Read output to ensure it's working
-			var buf bytes.Buffer
-			_, _ = io.Copy(&buf, r)
-			output := buf.String()
-			if !containsString(output, "rollback") {
-				t.Error("Rollback command should output rollback information")
-			}
-		}
-	})
-
-	t.Run("Version command", func(t *testing.T) {
-		// Capture stdout
-		old := os.Stdout
-		r, w, _ := os.Pipe()
-		os.Stdout = w
-
+	output, _ := captureCommandOutput(t, func() error {
 		cmd := &cobra.Command{}
 		versionCmd.Run(cmd, []string{})
-
-		// Restore stdout
-		if cerr := w.Close(); cerr != nil {
-			t.Logf("Failed to close pipe writer: %v", cerr)
-		}
-		os.Stdout = old
-
-		// Read captured output
-		var buf bytes.Buffer
-		_, _ = io.Copy(&buf, r)
-		output := buf.String()
-
-		if !containsString(output, "GeoIP Server") {
-			t.Error("Version command should output server version")
-		}
-		if !containsString(output, "v1.0.0") {
-			t.Error("Version command should output version number")
-		}
+		return nil
 	})
+
+	if !containsString(output, "GeoIP Server") {
+		t.Error("Version command should output server version")
+	}
+	if !containsString(output, "v1.0.0") {
+		t.Error("Version command should output version number")
+	}
 }
 
 func TestCertificateCommands(t *testing.T) {

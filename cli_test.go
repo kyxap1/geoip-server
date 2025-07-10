@@ -24,117 +24,122 @@ func runCLICommand(args ...string) (string, string, error) {
 	return stdout.String(), stderr.String(), err
 }
 
-func TestCLI_CertCommands(t *testing.T) {
-	// Create temporary directory for test certificates
+func TestCLI_CertGenerateCommand(t *testing.T) {
 	tempDir := t.TempDir()
+	certPath := filepath.Join(tempDir, "generate_test")
 
-	t.Run("cert generate command", func(t *testing.T) {
-		certPath := filepath.Join(tempDir, "generate_test")
+	stdout, stderr, err := runCLICommand(
+		"cert", "generate",
+		"--cert-path", certPath,
+		"--cert-hosts", "test.local,192.168.1.100",
+		"--cert-valid-days", "30",
+	)
 
-		stdout, stderr, err := runCLICommand(
-			"cert", "generate",
-			"--cert-path", certPath,
-			"--cert-hosts", "test.local,192.168.1.100",
-			"--cert-valid-days", "30",
-		)
+	if err != nil {
+		t.Fatalf("cert generate command failed: %v\nStdout: %s\nStderr: %s", err, stdout, stderr)
+	}
 
-		if err != nil {
-			t.Fatalf("cert generate command failed: %v\nStdout: %s\nStderr: %s", err, stdout, stderr)
+	validateGeneratedCertFiles(t, certPath)
+}
+
+func TestCLI_CertInfoCommand(t *testing.T) {
+	tempDir := t.TempDir()
+	certPath := filepath.Join(tempDir, "info_test")
+
+	// Generate certificates first
+	_, _, err := runCLICommand(
+		"cert", "generate",
+		"--cert-path", certPath,
+		"--cert-hosts", "info.test,127.0.0.1",
+	)
+	if err != nil {
+		t.Fatalf("Failed to generate certificates for info test: %v", err)
+	}
+
+	stdout, stderr, err := runCLICommand(
+		"cert", "info",
+		"--cert-path", certPath,
+	)
+
+	if err != nil {
+		t.Fatalf("cert info command failed: %v\nStdout: %s\nStderr: %s", err, stdout, stderr)
+	}
+
+	validateCertInfoOutput(t, stdout, certPath)
+}
+
+func TestCLI_CertInfoNonExistent(t *testing.T) {
+	tempDir := t.TempDir()
+	nonExistentPath := filepath.Join(tempDir, "nonexistent")
+
+	_, stderr, err := runCLICommand(
+		"cert", "info",
+		"--cert-path", nonExistentPath,
+	)
+
+	if err == nil {
+		t.Error("cert info should fail when certificates don't exist")
+	}
+
+	if !strings.Contains(stderr, "certificates not found") {
+		t.Errorf("Expected 'certificates not found' error, got: %s", stderr)
+	}
+}
+
+// Helper functions for CLI cert command validation
+
+func validateGeneratedCertFiles(t *testing.T, certPath string) {
+	certFile := filepath.Join(certPath, "server.crt")
+	keyFile := filepath.Join(certPath, "server.key")
+
+	if _, err := os.Stat(certFile); os.IsNotExist(err) {
+		t.Error("Certificate file was not created")
+	}
+	if _, err := os.Stat(keyFile); os.IsNotExist(err) {
+		t.Error("Key file was not created")
+	}
+
+	// Check file permissions
+	if certInfo, err := os.Stat(certFile); err == nil {
+		if certInfo.Mode().Perm() != 0400 {
+			t.Errorf("Certificate file has wrong permissions: expected 0400, got %o", certInfo.Mode().Perm())
 		}
-
-		// Check if certificate files were created
-		certFile := filepath.Join(certPath, "server.crt")
-		keyFile := filepath.Join(certPath, "server.key")
-
-		if _, err := os.Stat(certFile); os.IsNotExist(err) {
-			t.Error("Certificate file was not created")
+	}
+	if keyInfo, err := os.Stat(keyFile); err == nil {
+		if keyInfo.Mode().Perm() != 0400 {
+			t.Errorf("Key file has wrong permissions: expected 0400, got %o", keyInfo.Mode().Perm())
 		}
-		if _, err := os.Stat(keyFile); os.IsNotExist(err) {
-			t.Error("Key file was not created")
+	}
+}
+
+func validateCertInfoOutput(t *testing.T, stdout, certPath string) {
+	expectedStrings := []string{
+		"Certificate Information:",
+		"Certificate Path:",
+		"Private Key Path:",
+		"Subject:",
+		"Issuer:",
+		"Valid From:",
+		"Valid Until:",
+		"DNS Names:",
+		"IP Addresses:",
+	}
+
+	for _, expected := range expectedStrings {
+		if !strings.Contains(stdout, expected) {
+			t.Errorf("cert info output missing expected string: %s\nOutput: %s", expected, stdout)
 		}
+	}
 
-		// Check file permissions (critical test)
-		if certInfo, err := os.Stat(certFile); err == nil {
-			if certInfo.Mode().Perm() != 0400 {
-				t.Errorf("Certificate file has wrong permissions: expected 0400, got %o", certInfo.Mode().Perm())
-			}
-		}
-		if keyInfo, err := os.Stat(keyFile); err == nil {
-			if keyInfo.Mode().Perm() != 0400 {
-				t.Errorf("Key file has wrong permissions: expected 0400, got %o", keyInfo.Mode().Perm())
-			}
-		}
-	})
-
-	t.Run("cert info command", func(t *testing.T) {
-		certPath := filepath.Join(tempDir, "info_test")
-
-		// First generate certificates
-		_, _, err := runCLICommand(
-			"cert", "generate",
-			"--cert-path", certPath,
-			"--cert-hosts", "info.test,127.0.0.1",
-		)
-		if err != nil {
-			t.Fatalf("Failed to generate certificates for info test: %v", err)
-		}
-
-		// Then get info
-		stdout, stderr, err := runCLICommand(
-			"cert", "info",
-			"--cert-path", certPath,
-		)
-
-		if err != nil {
-			t.Fatalf("cert info command failed: %v\nStdout: %s\nStderr: %s", err, stdout, stderr)
-		}
-
-		// Check that output contains expected information
-		expectedStrings := []string{
-			"Certificate Information:",
-			"Certificate Path:",
-			"Private Key Path:",
-			"Subject:",
-			"Issuer:",
-			"Valid From:",
-			"Valid Until:",
-			"DNS Names:",
-			"IP Addresses:",
-		}
-
-		for _, expected := range expectedStrings {
-			if !strings.Contains(stdout, expected) {
-				t.Errorf("cert info output missing expected string: %s\nOutput: %s", expected, stdout)
-			}
-		}
-
-		// Check that file paths are shown
-		expectedCertPath := filepath.Join(certPath, "server.crt")
-		expectedKeyPath := filepath.Join(certPath, "server.key")
-		if !strings.Contains(stdout, expectedCertPath) {
-			t.Errorf("cert info should show certificate path: %s", expectedCertPath)
-		}
-		if !strings.Contains(stdout, expectedKeyPath) {
-			t.Errorf("cert info should show key path: %s", expectedKeyPath)
-		}
-	})
-
-	t.Run("cert info without certificates", func(t *testing.T) {
-		nonExistentPath := filepath.Join(tempDir, "nonexistent")
-
-		_, stderr, err := runCLICommand(
-			"cert", "info",
-			"--cert-path", nonExistentPath,
-		)
-
-		if err == nil {
-			t.Error("cert info should fail when certificates don't exist")
-		}
-
-		if !strings.Contains(stderr, "certificates not found") {
-			t.Errorf("Expected 'certificates not found' error, got: %s", stderr)
-		}
-	})
+	// Check that file paths are shown
+	expectedCertPath := filepath.Join(certPath, "server.crt")
+	expectedKeyPath := filepath.Join(certPath, "server.key")
+	if !strings.Contains(stdout, expectedCertPath) {
+		t.Errorf("cert info should show certificate path: %s", expectedCertPath)
+	}
+	if !strings.Contains(stdout, expectedKeyPath) {
+		t.Errorf("cert info should show key path: %s", expectedKeyPath)
+	}
 }
 
 func TestCLI_HelpCommands(t *testing.T) {
@@ -249,130 +254,172 @@ func TestCLI_FlagValidation(t *testing.T) {
 	})
 }
 
-func TestCLI_Integration_CertificateWorkflow(t *testing.T) {
+// setupCLITest creates common test dependencies for CLI tests
+func setupCLITest(t *testing.T) string {
 	tempDir := t.TempDir()
-	certPath := filepath.Join(tempDir, "integration_test")
+	return filepath.Join(tempDir, "integration_test")
+}
 
-	// Step 1: Generate certificate
-	t.Run("generate certificate", func(t *testing.T) {
-		stdout, stderr, err := runCLICommand(
-			"cert", "generate",
-			"--cert-path", certPath,
-			"--cert-hosts", "integration.test,10.0.0.1",
-			"--cert-valid-days", "365",
-		)
+func TestCLI_CertificateGeneration(t *testing.T) {
+	certPath := setupCLITest(t)
 
-		if err != nil {
-			t.Fatalf("Certificate generation failed: %v\nStdout: %s\nStderr: %s", err, stdout, stderr)
+	stdout, stderr, err := runCLICommand(
+		"cert", "generate",
+		"--cert-path", certPath,
+		"--cert-hosts", "integration.test,10.0.0.1",
+		"--cert-valid-days", "365",
+	)
+
+	if err != nil {
+		t.Fatalf("Certificate generation failed: %v\nStdout: %s\nStderr: %s", err, stdout, stderr)
+	}
+
+	combinedOutput := stdout + stderr
+	if !strings.Contains(combinedOutput, "Self-signed certificate generated successfully") {
+		t.Errorf("Expected success message in certificate generation.\nStdout: %s\nStderr: %s", stdout, stderr)
+	}
+}
+
+func TestCLI_CertificateInfo(t *testing.T) {
+	certPath := setupCLITest(t)
+
+	// Generate certificate first
+	_, _, err := runCLICommand(
+		"cert", "generate",
+		"--cert-path", certPath,
+		"--cert-hosts", "integration.test,10.0.0.1",
+	)
+	if err != nil {
+		t.Fatalf("Failed to generate certificate for info test: %v", err)
+	}
+
+	stdout, stderr, err := runCLICommand(
+		"cert", "info",
+		"--cert-path", certPath,
+	)
+
+	if err != nil {
+		t.Fatalf("Certificate info failed: %v\nStdout: %s\nStderr: %s", err, stdout, stderr)
+	}
+
+	validateCertificateInfo(t, stdout, certPath)
+}
+
+func TestCLI_CertificatePermissions(t *testing.T) {
+	certPath := setupCLITest(t)
+
+	// Generate certificate first
+	_, _, err := runCLICommand(
+		"cert", "generate",
+		"--cert-path", certPath,
+		"--cert-hosts", "integration.test",
+	)
+	if err != nil {
+		t.Fatalf("Failed to generate certificate for permissions test: %v", err)
+	}
+
+	validateCLICertificatePermissions(t, certPath)
+}
+
+func TestCLI_CertificateRegeneration(t *testing.T) {
+	certPath := setupCLITest(t)
+
+	// Generate initial certificate
+	_, _, err := runCLICommand(
+		"cert", "generate",
+		"--cert-path", certPath,
+		"--cert-hosts", "initial.test",
+	)
+	if err != nil {
+		t.Fatalf("Failed to generate initial certificate: %v", err)
+	}
+
+	certFile := filepath.Join(certPath, "server.crt")
+	originalInfo, err := os.Stat(certFile)
+	if err != nil {
+		t.Fatalf("Failed to stat original certificate: %v", err)
+	}
+	originalModTime := originalInfo.ModTime()
+
+	time.Sleep(10 * time.Millisecond)
+
+	// Regenerate certificate
+	_, _, err = runCLICommand(
+		"cert", "generate",
+		"--cert-path", certPath,
+		"--cert-hosts", "regenerated.test",
+	)
+
+	if err != nil {
+		t.Fatalf("Certificate regeneration failed: %v", err)
+	}
+
+	validateCertificateRegeneration(t, certFile, originalModTime, certPath)
+}
+
+// Helper functions for CLI certificate validation
+
+func validateCertificateInfo(t *testing.T, stdout, certPath string) {
+	if !strings.Contains(stdout, "integration.test") {
+		t.Error("Certificate should contain integration.test DNS name")
+	}
+	if !strings.Contains(stdout, "10.0.0.1") {
+		t.Error("Certificate should contain 10.0.0.1 IP address")
+	}
+
+	expectedCertPath := filepath.Join(certPath, "server.crt")
+	expectedKeyPath := filepath.Join(certPath, "server.key")
+	if !strings.Contains(stdout, expectedCertPath) {
+		t.Error("Certificate path should be displayed")
+	}
+	if !strings.Contains(stdout, expectedKeyPath) {
+		t.Error("Key path should be displayed")
+	}
+}
+
+func validateCLICertificatePermissions(t *testing.T, certPath string) {
+	certFile := filepath.Join(certPath, "server.crt")
+	keyFile := filepath.Join(certPath, "server.key")
+
+	// Check certificate file permissions
+	if certInfo, err := os.Stat(certFile); err == nil {
+		expectedPerm := fs.FileMode(0400)
+		if certInfo.Mode().Perm() != expectedPerm {
+			t.Errorf("Certificate file permissions: expected %o, got %o", expectedPerm, certInfo.Mode().Perm())
 		}
+	} else {
+		t.Errorf("Failed to stat certificate file: %v", err)
+	}
 
-		// Should contain success message (note: messages go to stderr in logrus)
-		combinedOutput := stdout + stderr
-		if !strings.Contains(combinedOutput, "Self-signed certificate generated successfully") {
-			t.Errorf("Expected success message in certificate generation.\nStdout: %s\nStderr: %s", stdout, stderr)
+	// Check key file permissions
+	if keyInfo, err := os.Stat(keyFile); err == nil {
+		expectedPerm := fs.FileMode(0400)
+		if keyInfo.Mode().Perm() != expectedPerm {
+			t.Errorf("Key file permissions: expected %o, got %o", expectedPerm, keyInfo.Mode().Perm())
 		}
-	})
+	} else {
+		t.Errorf("Failed to stat key file: %v", err)
+	}
+}
 
-	// Step 2: Verify certificate info
-	t.Run("verify certificate info", func(t *testing.T) {
-		stdout, stderr, err := runCLICommand(
-			"cert", "info",
-			"--cert-path", certPath,
-		)
+func validateCertificateRegeneration(t *testing.T, certFile string, originalModTime time.Time, certPath string) {
+	newInfo, err := os.Stat(certFile)
+	if err != nil {
+		t.Fatalf("Failed to stat regenerated certificate: %v", err)
+	}
 
-		if err != nil {
-			t.Fatalf("Certificate info failed: %v\nStdout: %s\nStderr: %s", err, stdout, stderr)
-		}
+	if !newInfo.ModTime().After(originalModTime) {
+		t.Error("Certificate should have been regenerated with newer timestamp")
+	}
 
-		// Check certificate details
-		if !strings.Contains(stdout, "integration.test") {
-			t.Error("Certificate should contain integration.test DNS name")
-		}
-		if !strings.Contains(stdout, "10.0.0.1") {
-			t.Error("Certificate should contain 10.0.0.1 IP address")
-		}
+	stdout, _, err := runCLICommand("cert", "info", "--cert-path", certPath)
+	if err != nil {
+		t.Fatalf("Failed to get info for regenerated certificate: %v", err)
+	}
 
-		// Verify paths are shown
-		expectedCertPath := filepath.Join(certPath, "server.crt")
-		expectedKeyPath := filepath.Join(certPath, "server.key")
-		if !strings.Contains(stdout, expectedCertPath) {
-			t.Error("Certificate path should be displayed")
-		}
-		if !strings.Contains(stdout, expectedKeyPath) {
-			t.Error("Key path should be displayed")
-		}
-	})
-
-	// Step 3: Verify file permissions
-	t.Run("verify file permissions", func(t *testing.T) {
-		certFile := filepath.Join(certPath, "server.crt")
-		keyFile := filepath.Join(certPath, "server.key")
-
-		// Check certificate file permissions
-		if certInfo, err := os.Stat(certFile); err == nil {
-			expectedPerm := fs.FileMode(0400)
-			if certInfo.Mode().Perm() != expectedPerm {
-				t.Errorf("Certificate file permissions: expected %o, got %o", expectedPerm, certInfo.Mode().Perm())
-			}
-		} else {
-			t.Errorf("Failed to stat certificate file: %v", err)
-		}
-
-		// Check key file permissions
-		if keyInfo, err := os.Stat(keyFile); err == nil {
-			expectedPerm := fs.FileMode(0400)
-			if keyInfo.Mode().Perm() != expectedPerm {
-				t.Errorf("Key file permissions: expected %o, got %o", expectedPerm, keyInfo.Mode().Perm())
-			}
-		} else {
-			t.Errorf("Failed to stat key file: %v", err)
-		}
-	})
-
-	// Step 4: Test regeneration (should overwrite)
-	t.Run("regenerate certificate", func(t *testing.T) {
-		// Get original modification time
-		certFile := filepath.Join(certPath, "server.crt")
-		originalInfo, err := os.Stat(certFile)
-		if err != nil {
-			t.Fatalf("Failed to stat original certificate: %v", err)
-		}
-		originalModTime := originalInfo.ModTime()
-
-		// Wait a moment to ensure different mod time
-		time.Sleep(10 * time.Millisecond)
-
-		// Regenerate
-		_, _, err = runCLICommand(
-			"cert", "generate",
-			"--cert-path", certPath,
-			"--cert-hosts", "regenerated.test",
-		)
-
-		if err != nil {
-			t.Fatalf("Certificate regeneration failed: %v", err)
-		}
-
-		// Check that file was updated
-		newInfo, err := os.Stat(certFile)
-		if err != nil {
-			t.Fatalf("Failed to stat regenerated certificate: %v", err)
-		}
-
-		if !newInfo.ModTime().After(originalModTime) {
-			t.Error("Certificate should have been regenerated with newer timestamp")
-		}
-
-		// Verify new content
-		stdout, _, err := runCLICommand("cert", "info", "--cert-path", certPath)
-		if err != nil {
-			t.Fatalf("Failed to get info for regenerated certificate: %v", err)
-		}
-
-		if !strings.Contains(stdout, "regenerated.test") {
-			t.Error("Regenerated certificate should contain new DNS name")
-		}
-	})
+	if !strings.Contains(stdout, "regenerated.test") {
+		t.Error("Regenerated certificate should contain new DNS name")
+	}
 }
 
 func TestCLI_ErrorHandling(t *testing.T) {

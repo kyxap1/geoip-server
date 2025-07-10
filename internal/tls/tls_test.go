@@ -83,128 +83,135 @@ func TestCertificatesExist(t *testing.T) {
 	})
 }
 
-func TestGenerateSelfSignedCert(t *testing.T) {
+// setupTLSTest creates common test dependencies
+func setupTLSTest(t *testing.T) (*logrus.Logger, string, string, string) {
 	logger := logrus.New()
-	logger.SetLevel(logrus.ErrorLevel) // Suppress output during tests
+	logger.SetLevel(logrus.ErrorLevel)
 
-	t.Run("Generate certificate with single host", func(t *testing.T) {
-		tempDir := t.TempDir()
-		certPath := filepath.Join(tempDir, "cert.crt")
-		keyPath := filepath.Join(tempDir, "key.key")
+	tempDir := t.TempDir()
+	certPath := filepath.Join(tempDir, "cert.crt")
+	keyPath := filepath.Join(tempDir, "key.key")
 
-		cm := NewCertManager(certPath, keyPath, logger)
+	return logger, tempDir, certPath, keyPath
+}
 
-		err := cm.GenerateSelfSignedCert("localhost", 365)
-		if err != nil {
-			t.Fatalf("Failed to generate certificate: %v", err)
-		}
+func TestGenerateSelfSignedCertSingleHost(t *testing.T) {
+	logger, _, certPath, keyPath := setupTLSTest(t)
+	cm := NewCertManager(certPath, keyPath, logger)
 
-		// Check if files exist
-		if !cm.CertificatesExist() {
-			t.Error("Generated certificates don't exist")
-		}
+	err := cm.GenerateSelfSignedCert("localhost", 365)
+	if err != nil {
+		t.Fatalf("Failed to generate certificate: %v", err)
+	}
 
-		// Check file permissions (critical test for new functionality)
-		certInfo, err := os.Stat(certPath)
-		if err != nil {
-			t.Fatalf("Failed to stat cert file: %v", err)
-		}
-		if certInfo.Mode().Perm() != 0400 {
-			t.Errorf("Expected cert file permissions 0400, got %o", certInfo.Mode().Perm())
-		}
+	validateCertificateFiles(t, cm, certPath, keyPath)
+	validateSingleHostCertificate(t, cm)
+}
 
-		keyInfo, err := os.Stat(keyPath)
-		if err != nil {
-			t.Fatalf("Failed to stat key file: %v", err)
-		}
-		if keyInfo.Mode().Perm() != 0400 {
-			t.Errorf("Expected key file permissions 0400, got %o", keyInfo.Mode().Perm())
-		}
+func TestGenerateSelfSignedCertMultipleHosts(t *testing.T) {
+	logger, _, certPath, keyPath := setupTLSTest(t)
+	cm := NewCertManager(certPath, keyPath, logger)
 
-		// Verify certificate content
-		info, err := cm.GetCertificateInfo()
-		if err != nil {
-			t.Fatalf("Failed to get certificate info: %v", err)
-		}
+	hosts := "localhost,example.com,127.0.0.1,192.168.1.1"
+	err := cm.GenerateSelfSignedCert(hosts, 30)
+	if err != nil {
+		t.Fatalf("Failed to generate certificate: %v", err)
+	}
 
-		dnsNames := info["dns_names"].([]string)
-		if len(dnsNames) != 1 || dnsNames[0] != "localhost" {
-			t.Errorf("Expected DNS names [localhost], got %v", dnsNames)
-		}
-	})
+	validateMultipleHostsCertificate(t, cm)
+}
 
-	t.Run("Generate certificate with multiple hosts", func(t *testing.T) {
-		tempDir := t.TempDir()
-		certPath := filepath.Join(tempDir, "cert.crt")
-		keyPath := filepath.Join(tempDir, "key.key")
+func TestGenerateSelfSignedCertEmptyHosts(t *testing.T) {
+	logger, _, certPath, keyPath := setupTLSTest(t)
+	cm := NewCertManager(certPath, keyPath, logger)
 
-		cm := NewCertManager(certPath, keyPath, logger)
+	err := cm.GenerateSelfSignedCert("", 365)
+	if err != nil {
+		t.Fatalf("Failed to generate certificate: %v", err)
+	}
 
-		hosts := "localhost,example.com,127.0.0.1,192.168.1.1"
-		err := cm.GenerateSelfSignedCert(hosts, 30)
-		if err != nil {
-			t.Fatalf("Failed to generate certificate: %v", err)
-		}
+	if !cm.CertificatesExist() {
+		t.Error("Generated certificates don't exist")
+	}
+}
 
-		// Verify certificate content
-		info, err := cm.GetCertificateInfo()
-		if err != nil {
-			t.Fatalf("Failed to get certificate info: %v", err)
-		}
+func TestGenerateSelfSignedCertNestedDirectory(t *testing.T) {
+	logger, tempDir, _, _ := setupTLSTest(t)
 
-		dnsNames := info["dns_names"].([]string)
-		expectedDNS := []string{"localhost", "example.com"}
-		if len(dnsNames) != len(expectedDNS) {
-			t.Errorf("Expected %d DNS names, got %d", len(expectedDNS), len(dnsNames))
-		}
+	certDir := filepath.Join(tempDir, "nested", "dir")
+	certPath := filepath.Join(certDir, "cert.crt")
+	keyPath := filepath.Join(certDir, "key.key")
 
-		ipAddresses := info["ip_addresses"].([]net.IP)
-		if len(ipAddresses) != 2 {
-			t.Errorf("Expected 2 IP addresses, got %d", len(ipAddresses))
-		}
-	})
+	cm := NewCertManager(certPath, keyPath, logger)
 
-	t.Run("Generate certificate with empty hosts", func(t *testing.T) {
-		tempDir := t.TempDir()
-		certPath := filepath.Join(tempDir, "cert.crt")
-		keyPath := filepath.Join(tempDir, "key.key")
+	err := cm.GenerateSelfSignedCert("localhost", 365)
+	if err != nil {
+		t.Fatalf("Failed to generate certificate: %v", err)
+	}
 
-		cm := NewCertManager(certPath, keyPath, logger)
+	if _, err := os.Stat(certDir); os.IsNotExist(err) {
+		t.Error("Certificate directory was not created")
+	}
 
-		err := cm.GenerateSelfSignedCert("", 365)
-		if err != nil {
-			t.Fatalf("Failed to generate certificate: %v", err)
-		}
+	if !cm.CertificatesExist() {
+		t.Error("Generated certificates don't exist")
+	}
+}
 
-		// Should still create valid certificate
-		if !cm.CertificatesExist() {
-			t.Error("Generated certificates don't exist")
-		}
-	})
+// Helper functions for certificate validation
 
-	t.Run("Generate certificate in nested directory", func(t *testing.T) {
-		tempDir := t.TempDir()
-		certDir := filepath.Join(tempDir, "nested", "dir")
-		certPath := filepath.Join(certDir, "cert.crt")
-		keyPath := filepath.Join(certDir, "key.key")
+func validateCertificateFiles(t *testing.T, cm *CertManager, certPath, keyPath string) {
+	if !cm.CertificatesExist() {
+		t.Error("Generated certificates don't exist")
+	}
 
-		cm := NewCertManager(certPath, keyPath, logger)
+	// Check cert file permissions
+	certInfo, err := os.Stat(certPath)
+	if err != nil {
+		t.Fatalf("Failed to stat cert file: %v", err)
+	}
+	if certInfo.Mode().Perm() != 0400 {
+		t.Errorf("Expected cert file permissions 0400, got %o", certInfo.Mode().Perm())
+	}
 
-		err := cm.GenerateSelfSignedCert("localhost", 365)
-		if err != nil {
-			t.Fatalf("Failed to generate certificate: %v", err)
-		}
+	// Check key file permissions
+	keyInfo, err := os.Stat(keyPath)
+	if err != nil {
+		t.Fatalf("Failed to stat key file: %v", err)
+	}
+	if keyInfo.Mode().Perm() != 0400 {
+		t.Errorf("Expected key file permissions 0400, got %o", keyInfo.Mode().Perm())
+	}
+}
 
-		// Check if directory was created
-		if _, err := os.Stat(certDir); os.IsNotExist(err) {
-			t.Error("Certificate directory was not created")
-		}
+func validateSingleHostCertificate(t *testing.T, cm *CertManager) {
+	info, err := cm.GetCertificateInfo()
+	if err != nil {
+		t.Fatalf("Failed to get certificate info: %v", err)
+	}
 
-		// Check if files exist with correct permissions
-		if !cm.CertificatesExist() {
-			t.Error("Generated certificates don't exist")
-		}
-	})
+	dnsNames := info["dns_names"].([]string)
+	if len(dnsNames) != 1 || dnsNames[0] != "localhost" {
+		t.Errorf("Expected DNS names [localhost], got %v", dnsNames)
+	}
+}
+
+func validateMultipleHostsCertificate(t *testing.T, cm *CertManager) {
+	info, err := cm.GetCertificateInfo()
+	if err != nil {
+		t.Fatalf("Failed to get certificate info: %v", err)
+	}
+
+	dnsNames := info["dns_names"].([]string)
+	expectedDNS := []string{"localhost", "example.com"}
+	if len(dnsNames) != len(expectedDNS) {
+		t.Errorf("Expected %d DNS names, got %d", len(expectedDNS), len(dnsNames))
+	}
+
+	ipAddresses := info["ip_addresses"].([]net.IP)
+	if len(ipAddresses) != 2 {
+		t.Errorf("Expected 2 IP addresses, got %d", len(ipAddresses))
+	}
 }
 
 func TestLoadTLSConfig(t *testing.T) {
@@ -335,89 +342,100 @@ func TestValidateCertificates(t *testing.T) {
 	})
 }
 
-func TestGetCertificateInfo(t *testing.T) {
+// Helper function to validate certificate info fields
+func validateCertificateInfoFields(t *testing.T, info map[string]interface{}) {
+	requiredFields := []string{"subject", "issuer", "not_before", "not_after", "dns_names", "ip_addresses", "is_ca"}
+	for _, field := range requiredFields {
+		if _, exists := info[field]; !exists {
+			t.Errorf("Missing required field: %s", field)
+		}
+	}
+}
+
+// Helper function to validate certificate subject
+func validateCertificateSubject(t *testing.T, info map[string]interface{}) {
+	subject := info["subject"].(string)
+	if !strings.Contains(subject, "GeoIP Service") {
+		t.Errorf("Expected subject to contain 'GeoIP Service', got: %s", subject)
+	}
+}
+
+// Helper function to validate certificate hosts
+func validateCertificateHosts(t *testing.T, info map[string]interface{}) {
+	dnsNames := info["dns_names"].([]string)
+	expectedDNS := []string{"localhost", "example.com"}
+	if len(dnsNames) != len(expectedDNS) {
+		t.Errorf("Expected %d DNS names, got %d", len(expectedDNS), len(dnsNames))
+	}
+
+	ipAddresses := info["ip_addresses"].([]net.IP)
+	if len(ipAddresses) != 1 {
+		t.Errorf("Expected 1 IP address, got %d", len(ipAddresses))
+	}
+}
+
+// Helper function to validate certificate validity period
+func validateCertificateValidity(t *testing.T, info map[string]interface{}) {
+	isCA := info["is_ca"].(bool)
+	if isCA {
+		t.Error("Expected certificate to not be a CA certificate")
+	}
+
+	notBefore := info["not_before"].(time.Time)
+	notAfter := info["not_after"].(time.Time)
+	if notAfter.Before(notBefore) {
+		t.Error("Certificate expiry date is before start date")
+	}
+
+	duration := notAfter.Sub(notBefore)
+	expectedDuration := 365 * 24 * time.Hour
+	if duration < expectedDuration-time.Hour || duration > expectedDuration+time.Hour {
+		t.Errorf("Expected certificate duration ~%v, got %v", expectedDuration, duration)
+	}
+}
+
+func TestGetCertificateInfo_ValidCertificate(t *testing.T) {
 	logger := logrus.New()
 	logger.SetLevel(logrus.ErrorLevel)
 
-	t.Run("Get certificate info for valid certificate", func(t *testing.T) {
-		tempDir := t.TempDir()
-		certPath := filepath.Join(tempDir, "cert.crt")
-		keyPath := filepath.Join(tempDir, "key.key")
+	tempDir := t.TempDir()
+	certPath := filepath.Join(tempDir, "cert.crt")
+	keyPath := filepath.Join(tempDir, "key.key")
 
-		cm := NewCertManager(certPath, keyPath, logger)
+	cm := NewCertManager(certPath, keyPath, logger)
 
-		// Generate certificate
-		hosts := "localhost,example.com,127.0.0.1"
-		err := cm.GenerateSelfSignedCert(hosts, 365)
-		if err != nil {
-			t.Fatalf("Failed to generate certificate: %v", err)
-		}
+	// Generate certificate
+	hosts := "localhost,example.com,127.0.0.1"
+	err := cm.GenerateSelfSignedCert(hosts, 365)
+	if err != nil {
+		t.Fatalf("Failed to generate certificate: %v", err)
+	}
 
-		// Get certificate info
-		info, err := cm.GetCertificateInfo()
-		if err != nil {
-			t.Fatalf("Failed to get certificate info: %v", err)
-		}
+	// Get certificate info
+	info, err := cm.GetCertificateInfo()
+	if err != nil {
+		t.Fatalf("Failed to get certificate info: %v", err)
+	}
 
-		// Verify required fields exist
-		requiredFields := []string{"subject", "issuer", "not_before", "not_after", "dns_names", "ip_addresses", "is_ca"}
-		for _, field := range requiredFields {
-			if _, exists := info[field]; !exists {
-				t.Errorf("Missing required field: %s", field)
-			}
-		}
+	validateCertificateInfoFields(t, info)
+	validateCertificateSubject(t, info)
+	validateCertificateHosts(t, info)
+	validateCertificateValidity(t, info)
+}
 
-		// Verify subject contains GeoIP Service
-		subject := info["subject"].(string)
-		if !strings.Contains(subject, "GeoIP Service") {
-			t.Errorf("Expected subject to contain 'GeoIP Service', got: %s", subject)
-		}
+func TestGetCertificateInfo_NonexistentCertificate(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.ErrorLevel)
 
-		// Verify DNS names
-		dnsNames := info["dns_names"].([]string)
-		expectedDNS := []string{"localhost", "example.com"}
-		if len(dnsNames) != len(expectedDNS) {
-			t.Errorf("Expected %d DNS names, got %d", len(expectedDNS), len(dnsNames))
-		}
+	cm := NewCertManager("/nonexistent/cert.crt", "/nonexistent/key.key", logger)
 
-		// Verify IP addresses
-		ipAddresses := info["ip_addresses"].([]net.IP)
-		if len(ipAddresses) != 1 {
-			t.Errorf("Expected 1 IP address, got %d", len(ipAddresses))
-		}
-
-		// Verify it's not a CA certificate
-		isCA := info["is_ca"].(bool)
-		if isCA {
-			t.Error("Expected certificate to not be a CA certificate")
-		}
-
-		// Verify dates
-		notBefore := info["not_before"].(time.Time)
-		notAfter := info["not_after"].(time.Time)
-		if notAfter.Before(notBefore) {
-			t.Error("Certificate expiry date is before start date")
-		}
-
-		// Verify certificate is valid for approximately 365 days
-		duration := notAfter.Sub(notBefore)
-		expectedDuration := 365 * 24 * time.Hour
-		if duration < expectedDuration-time.Hour || duration > expectedDuration+time.Hour {
-			t.Errorf("Expected certificate duration ~%v, got %v", expectedDuration, duration)
-		}
-	})
-
-	t.Run("Get certificate info for nonexistent certificate", func(t *testing.T) {
-		cm := NewCertManager("/nonexistent/cert.crt", "/nonexistent/key.key", logger)
-
-		_, err := cm.GetCertificateInfo()
-		if err == nil {
-			t.Error("Expected error when getting info for nonexistent certificate")
-		}
-		if !strings.Contains(err.Error(), "certificates not found") {
-			t.Errorf("Expected 'certificates not found' error, got: %v", err)
-		}
-	})
+	_, err := cm.GetCertificateInfo()
+	if err == nil {
+		t.Error("Expected error when getting info for nonexistent certificate")
+	}
+	if !strings.Contains(err.Error(), "certificates not found") {
+		t.Errorf("Expected 'certificates not found' error, got: %v", err)
+	}
 }
 
 // Test file permissions specifically (critical for security)
@@ -459,13 +477,12 @@ func TestCertificatePermissions(t *testing.T) {
 }
 
 func TestCertificateRegeneration(t *testing.T) {
-	// Test certificate regeneration when files have 400 permissions
 	tempDir := t.TempDir()
 	certPath := filepath.Join(tempDir, "cert.pem")
 	keyPath := filepath.Join(tempDir, "key.pem")
 
 	logger := logrus.New()
-	logger.SetLevel(logrus.ErrorLevel) // Suppress logs during tests
+	logger.SetLevel(logrus.ErrorLevel)
 
 	cm := NewCertManager(certPath, keyPath, logger)
 
@@ -475,7 +492,12 @@ func TestCertificateRegeneration(t *testing.T) {
 		t.Fatalf("Failed to generate initial certificate: %v", err)
 	}
 
-	// Verify files exist with 400 permissions
+	originalCertTime, originalKeyTime := validateInitialCertificate(t, certPath, keyPath)
+	regenerateAndVerify(t, cm, originalCertTime, originalKeyTime, certPath, keyPath)
+}
+
+// Helper function to validate initial certificate
+func validateInitialCertificate(t *testing.T, certPath, keyPath string) (time.Time, time.Time) {
 	certInfo, err := os.Stat(certPath)
 	if err != nil {
 		t.Fatalf("Certificate file doesn't exist: %v", err)
@@ -492,25 +514,31 @@ func TestCertificateRegeneration(t *testing.T) {
 		t.Errorf("Expected key permissions 0400, got %o", keyInfo.Mode().Perm())
 	}
 
-	// Get original modification times
-	originalCertModTime := certInfo.ModTime()
-	originalKeyModTime := keyInfo.ModTime()
+	return certInfo.ModTime(), keyInfo.ModTime()
+}
 
-	// Wait a moment to ensure different mod times
+// Helper function to regenerate certificate and verify
+func regenerateAndVerify(t *testing.T, cm *CertManager, originalCertTime, originalKeyTime time.Time, certPath, keyPath string) {
+	// Wait to ensure different mod times
 	time.Sleep(10 * time.Millisecond)
 
-	// Regenerate certificate (should overwrite despite 400 permissions)
-	err = cm.GenerateSelfSignedCert("regenerated.test", 365)
+	// Regenerate certificate
+	err := cm.GenerateSelfSignedCert("regenerated.test", 365)
 	if err != nil {
 		t.Fatalf("Failed to regenerate certificate: %v", err)
 	}
 
-	// Verify files were regenerated
+	verifyRegeneratedFiles(t, certPath, keyPath, originalCertTime, originalKeyTime)
+	verifyRegeneratedContent(t, cm)
+}
+
+// Helper function to verify regenerated files
+func verifyRegeneratedFiles(t *testing.T, certPath, keyPath string, originalCertTime, originalKeyTime time.Time) {
 	newCertInfo, err := os.Stat(certPath)
 	if err != nil {
 		t.Fatalf("Regenerated certificate file doesn't exist: %v", err)
 	}
-	if !newCertInfo.ModTime().After(originalCertModTime) {
+	if !newCertInfo.ModTime().After(originalCertTime) {
 		t.Error("Certificate file should have been regenerated with newer timestamp")
 	}
 
@@ -518,7 +546,7 @@ func TestCertificateRegeneration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Regenerated key file doesn't exist: %v", err)
 	}
-	if !newKeyInfo.ModTime().After(originalKeyModTime) {
+	if !newKeyInfo.ModTime().After(originalKeyTime) {
 		t.Error("Key file should have been regenerated with newer timestamp")
 	}
 
@@ -529,8 +557,10 @@ func TestCertificateRegeneration(t *testing.T) {
 	if newKeyInfo.Mode().Perm() != 0400 {
 		t.Errorf("Expected regenerated key permissions 0400, got %o", newKeyInfo.Mode().Perm())
 	}
+}
 
-	// Verify certificate content was updated
+// Helper function to verify regenerated certificate content
+func verifyRegeneratedContent(t *testing.T, cm *CertManager) {
 	info, err := cm.GetCertificateInfo()
 	if err != nil {
 		t.Fatalf("Failed to get certificate info: %v", err)

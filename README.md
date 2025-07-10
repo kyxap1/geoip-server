@@ -2,8 +2,7 @@
 
 A high-performance GeoIP server built with Go that provides IP geolocation information using MaxMind's free GeoLite2 databases. The server supports multiple output formats (JSON, XML, CSV) and includes automatic database updates, TLS support, and comprehensive logging.
 
-[![CI/CD Pipeline](https://github.com/kyxap1/geoip-server/workflows/CI/badge.svg)](https://github.com/kyxap1/geoip-server/actions)
-[![Docker Build](https://github.com/kyxap1/geoip-server/workflows/Docker%20Build/badge.svg)](https://github.com/kyxap1/geoip-server/actions)
+[![CI/CD Pipeline](https://github.com/kyxap1/geoip-server/workflows/Build%20and%20Push%20Docker%20Image/badge.svg)](https://github.com/kyxap1/geoip-server/actions)
 [![Go Report Card](https://goreportcard.com/badge/github.com/kyxap1/geoip-server)](https://goreportcard.com/report/github.com/kyxap1/geoip-server)
 [![Coverage](https://img.shields.io/badge/Coverage-59.0%25-brightgreen.svg)](https://github.com/kyxap1/geoip-server)
 

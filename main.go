@@ -129,16 +129,40 @@ func runServer(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("MaxMind license key is required")
 	}
 
-	// Initialize database manager with caching
-	dbManager := geoip.NewDatabaseManager(cfg.DBPath, cfg.MaxMindLicense, logger, cfg.CacheEnabled, cfg.CacheTTL, cfg.CacheMaxEntries)
-	if err := dbManager.Initialize(); err != nil {
-		logger.Fatalf("Failed to initialize database manager: %v", err)
+	// Setup database manager
+	dbManager, err := setupDatabase()
+	if err != nil {
+		return err
 	}
 	defer func() {
 		if err := dbManager.Close(); err != nil {
 			logger.Errorf("Failed to close database manager: %v", err)
 		}
 	}()
+
+	// Setup TLS configuration
+	tlsConfig, err := setupTLS()
+	if err != nil {
+		return err
+	}
+
+	// Create HTTP/HTTPS servers
+	server, httpsServer := createServers(dbManager, tlsConfig)
+
+	// Setup automatic database updates scheduler
+	cronScheduler := setupScheduler(dbManager)
+
+	// Start servers and wait for shutdown
+	return startServersAndWait(server, httpsServer, cronScheduler, dbManager)
+}
+
+// setupDatabase initializes the database manager with caching
+func setupDatabase() (*geoip.DatabaseManager, error) {
+	dbManager := geoip.NewDatabaseManager(cfg.DBPath, cfg.MaxMindLicense, logger, cfg.CacheEnabled, cfg.CacheTTL, cfg.CacheMaxEntries)
+	if err := dbManager.Initialize(); err != nil {
+		logger.Fatalf("Failed to initialize database manager: %v", err)
+		return nil, err
+	}
 
 	// Log cache configuration
 	if cfg.CacheEnabled {
@@ -147,37 +171,48 @@ func runServer(cmd *cobra.Command, args []string) error {
 		logger.Info("Cache disabled")
 	}
 
-	// Setup TLS if enabled
-	var tlsConfig *tls.Config
-	if cfg.EnableTLS {
-		certPath := cfg.CertFile
-		keyPath := cfg.KeyFile
+	return dbManager, nil
+}
 
-		// Use default paths if not specified
-		if certPath == "" {
-			certPath = filepath.Join(cfg.CertPath, "server.crt")
-		}
-		if keyPath == "" {
-			keyPath = filepath.Join(cfg.CertPath, "server.key")
-		}
+// setupTLS configures TLS settings if enabled
+func setupTLS() (*tls.Config, error) {
+	if !cfg.EnableTLS {
+		return nil, nil
+	}
 
-		certManager := tlsmanager.NewCertManager(certPath, keyPath, logger)
+	certPath := cfg.CertFile
+	keyPath := cfg.KeyFile
 
-		// Generate certificates if required
-		if cfg.GenerateCerts || !certManager.CertificatesExist() {
-			if err := certManager.GenerateSelfSignedCert(cfg.CertHosts, cfg.CertValidDays); err != nil {
-				logger.Fatalf("Failed to generate certificates: %v", err)
-			}
-		}
+	// Use default paths if not specified
+	if certPath == "" {
+		certPath = filepath.Join(cfg.CertPath, "server.crt")
+	}
+	if keyPath == "" {
+		keyPath = filepath.Join(cfg.CertPath, "server.key")
+	}
 
-		// Load TLS config
-		var err error
-		tlsConfig, err = certManager.LoadTLSConfig()
-		if err != nil {
-			logger.Fatalf("Failed to load TLS config: %v", err)
+	certManager := tlsmanager.NewCertManager(certPath, keyPath, logger)
+
+	// Generate certificates if required
+	if cfg.GenerateCerts || !certManager.CertificatesExist() {
+		if err := certManager.GenerateSelfSignedCert(cfg.CertHosts, cfg.CertValidDays); err != nil {
+			logger.Fatalf("Failed to generate certificates: %v", err)
+			return nil, err
 		}
 	}
 
+	// Load TLS config
+	tlsConfig, err := certManager.LoadTLSConfig()
+	if err != nil {
+		logger.Fatalf("Failed to load TLS config: %v", err)
+		return nil, err
+	}
+
+	return tlsConfig, nil
+}
+
+// createServers creates HTTP and HTTPS servers
+func createServers(dbManager *geoip.DatabaseManager, tlsConfig *tls.Config) (*http.Server, *http.Server) {
 	// Setup HTTP handlers
 	apiHandler := handlers.NewAPIHandler(dbManager, logger)
 	router := apiHandler.SetupRoutes()
@@ -204,29 +239,37 @@ func runServer(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Setup automatic database updates
-	var cronScheduler *cron.Cron
-	if cfg.AutoUpdate {
-		cronScheduler = cron.New()
-		_, err := cronScheduler.AddFunc(cfg.UpdateInterval, func() {
-			logger.Info("Running scheduled database update...")
-			if err := dbManager.UpdateDatabases(); err != nil {
-				logger.Errorf("Failed to update databases: %v", err)
-			} else {
-				logger.Info("Database update completed successfully")
-			}
-		})
-		if err != nil {
-			logger.Errorf("Failed to setup cron scheduler: %v", err)
-		} else {
-			cronScheduler.Start()
-			logger.Infof("Scheduled database updates every: %s", cfg.UpdateInterval)
-		}
+	return server, httpsServer
+}
+
+// setupScheduler configures automatic database updates
+func setupScheduler(dbManager *geoip.DatabaseManager) *cron.Cron {
+	if !cfg.AutoUpdate {
+		return nil
 	}
 
-	// Start servers with improved error handling
+	cronScheduler := cron.New()
+	_, err := cronScheduler.AddFunc(cfg.UpdateInterval, func() {
+		logger.Info("Running scheduled database update...")
+		if err := dbManager.UpdateDatabases(); err != nil {
+			logger.Errorf("Failed to update databases: %v", err)
+		} else {
+			logger.Info("Database update completed successfully")
+		}
+	})
+	if err != nil {
+		logger.Errorf("Failed to setup cron scheduler: %v", err)
+		return nil
+	}
+
+	cronScheduler.Start()
+	logger.Infof("Scheduled database updates every: %s", cfg.UpdateInterval)
+	return cronScheduler
+}
+
+// startServersAndWait starts servers and waits for shutdown signal
+func startServersAndWait(server, httpsServer *http.Server, cronScheduler *cron.Cron, dbManager *geoip.DatabaseManager) error {
 	var wg sync.WaitGroup
-	var serverErr error
 	serverErrChan := make(chan error, 2)
 
 	// Start HTTP server
@@ -235,8 +278,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 		defer wg.Done()
 		logger.Infof("Starting HTTP server on port %d", cfg.Port)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			serverErr = fmt.Errorf("HTTP server error: %w", err)
-			serverErrChan <- serverErr
+			serverErrChan <- fmt.Errorf("HTTP server error: %w", err)
 		}
 	}()
 
@@ -247,8 +289,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 			defer wg.Done()
 			logger.Infof("Starting HTTPS server on port %d", cfg.HTTPSPort)
 			if err := httpsServer.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
-				serverErr = fmt.Errorf("HTTPS server error: %w", err)
-				serverErrChan <- serverErr
+				serverErrChan <- fmt.Errorf("HTTPS server error: %w", err)
 			}
 		}()
 	}

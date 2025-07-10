@@ -186,27 +186,60 @@ func (dm *DatabaseManager) closeConnectionsUnsafe() {
 func (dm *DatabaseManager) UpdateDatabases() error {
 	dm.logger.Info("Starting database update...")
 
+	// Setup temporary directory for downloads
+	tempDir, cleanup, err := dm.setupUpdateEnvironment()
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	// Download all databases
+	newDatabases, err := dm.downloadAllDatabases(tempDir)
+	if err != nil {
+		return err
+	}
+
+	// Backup current databases
+	if err := dm.backupCurrentDatabases(); err != nil {
+		dm.logger.Warnf("Failed to backup current databases: %v", err)
+	}
+
+	// Replace production databases with new ones
+	if err := dm.replaceProductionDatabases(newDatabases); err != nil {
+		return err
+	}
+
+	// Finalize the update
+	return dm.finalizeUpdate()
+}
+
+// setupUpdateEnvironment creates temporary directory for database downloads
+func (dm *DatabaseManager) setupUpdateEnvironment() (string, func(), error) {
+	tempDir := filepath.Join(dm.dbPath, "temp")
+	if err := os.RemoveAll(tempDir); err != nil {
+		dm.logger.Warnf("Failed to remove temp directory: %v", err)
+	}
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		return "", nil, fmt.Errorf("failed to create temp directory: %w", err)
+	}
+
+	cleanup := func() {
+		if err := os.RemoveAll(tempDir); err != nil {
+			dm.logger.Warnf("Failed to remove temp directory during cleanup: %v", err)
+		}
+	}
+
+	return tempDir, cleanup, nil
+}
+
+// downloadAllDatabases downloads and verifies all required databases
+func (dm *DatabaseManager) downloadAllDatabases(tempDir string) ([]DatabaseInfo, error) {
 	databases := map[string]string{
 		"GeoLite2-City":    "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-City&license_key=%s&suffix=tar.gz",
 		"GeoLite2-Country": "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country&license_key=%s&suffix=tar.gz",
 		"GeoLite2-ASN":     "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-ASN&license_key=%s&suffix=tar.gz",
 	}
 
-	// Create temporary directory for new databases
-	tempDir := filepath.Join(dm.dbPath, "temp")
-	if err := os.RemoveAll(tempDir); err != nil {
-		dm.logger.Warnf("Failed to remove temp directory: %v", err)
-	}
-	if err := os.MkdirAll(tempDir, 0755); err != nil {
-		return fmt.Errorf("failed to create temp directory: %w", err)
-	}
-	defer func() {
-		if err := os.RemoveAll(tempDir); err != nil {
-			dm.logger.Warnf("Failed to remove temp directory during cleanup: %v", err)
-		}
-	}()
-
-	// Download and verify all databases first
 	var newDatabases []DatabaseInfo
 	for name, urlTemplate := range databases {
 		dm.logger.Infof("Downloading %s database...", name)
@@ -214,39 +247,49 @@ func (dm *DatabaseManager) UpdateDatabases() error {
 		url := fmt.Sprintf(urlTemplate, dm.licenseKey)
 		dbInfo, err := dm.downloadAndVerifyDatabase(url, name, tempDir)
 		if err != nil {
-			return fmt.Errorf("failed to download %s: %w", name, err)
+			return nil, fmt.Errorf("failed to download %s: %w", name, err)
 		}
 		newDatabases = append(newDatabases, *dbInfo)
 	}
 
-	// All downloads successful, now backup current databases and replace them
-	if err := dm.backupCurrentDatabases(); err != nil {
-		dm.logger.Warnf("Failed to backup current databases: %v", err)
-	}
+	return newDatabases, nil
+}
 
-	// Move new databases to production location
+// replaceProductionDatabases moves new databases to production location
+func (dm *DatabaseManager) replaceProductionDatabases(newDatabases []DatabaseInfo) error {
 	for _, dbInfo := range newDatabases {
-		tempPath := dbInfo.Path
-		prodPath := filepath.Join(dm.dbPath, filepath.Base(dbInfo.Path))
-
-		if err := os.Rename(tempPath, prodPath); err != nil {
-			dm.logger.Errorf("Failed to move %s to production: %v", dbInfo.Name, err)
-			// Try to rollback
+		if err := dm.moveToProduction(dbInfo); err != nil {
+			// Try to rollback on error
 			if rollbackErr := dm.rollbackDatabases(); rollbackErr != nil {
 				dm.logger.Errorf("Failed to rollback after move error: %v", rollbackErr)
 			}
-			return fmt.Errorf("failed to move %s to production: %w", dbInfo.Name, err)
+			return err
 		}
+	}
+	return nil
+}
 
-		// Save checksum
-		checksumPath := filepath.Join(dm.dbPath, dbInfo.Name+".checksum")
-		if err := os.WriteFile(checksumPath, []byte(dbInfo.Checksum), 0644); err != nil {
-			dm.logger.Warnf("Failed to save checksum for %s: %v", dbInfo.Name, err)
-		}
+// moveToProduction moves a single database to production and saves its checksum
+func (dm *DatabaseManager) moveToProduction(dbInfo DatabaseInfo) error {
+	tempPath := dbInfo.Path
+	prodPath := filepath.Join(dm.dbPath, filepath.Base(dbInfo.Path))
 
-		dm.logger.Infof("Successfully updated %s database", dbInfo.Name)
+	if err := os.Rename(tempPath, prodPath); err != nil {
+		return fmt.Errorf("failed to move %s to production: %w", dbInfo.Name, err)
 	}
 
+	// Save checksum
+	checksumPath := filepath.Join(dm.dbPath, dbInfo.Name+".checksum")
+	if err := os.WriteFile(checksumPath, []byte(dbInfo.Checksum), 0644); err != nil {
+		dm.logger.Warnf("Failed to save checksum for %s: %v", dbInfo.Name, err)
+	}
+
+	dm.logger.Infof("Successfully updated %s database", dbInfo.Name)
+	return nil
+}
+
+// finalizeUpdate verifies integrity and reloads databases
+func (dm *DatabaseManager) finalizeUpdate() error {
 	// Verify integrity of new databases
 	if err := dm.verifyDatabaseIntegrity(); err != nil {
 		dm.logger.Errorf("New database integrity check failed: %v", err)
@@ -267,12 +310,31 @@ func (dm *DatabaseManager) UpdateDatabases() error {
 
 // downloadAndVerifyDatabase downloads and verifies a single database
 func (dm *DatabaseManager) downloadAndVerifyDatabase(url, name, tempDir string) (*DatabaseInfo, error) {
-	// Download the tar.gz file
 	dm.logger.Debugf("Downloading from URL: %s", url)
 
+	// Download and extract the .mmdb file
+	tempPath := filepath.Join(tempDir, name+".mmdb")
+	if err := dm.downloadAndExtractMMDB(url, tempPath); err != nil {
+		return nil, err
+	}
+
+	// Create database info with verification
+	dbInfo, err := dm.createVerifiedDatabaseInfo(name, tempPath)
+	if err != nil {
+		return nil, err
+	}
+
+	dm.logger.Infof("Successfully downloaded and verified %s database (size: %d bytes, checksum: %s)",
+		name, dbInfo.Size, dbInfo.Checksum[:8]+"...")
+	return dbInfo, nil
+}
+
+// downloadAndExtractMMDB downloads a tar.gz file and extracts the .mmdb file
+func (dm *DatabaseManager) downloadAndExtractMMDB(url, outputPath string) error {
+	// Download the tar.gz file
 	resp, err := http.Get(url)
 	if err != nil {
-		return nil, fmt.Errorf("failed to download database: %w", err)
+		return fmt.Errorf("failed to download database: %w", err)
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
@@ -284,13 +346,13 @@ func (dm *DatabaseManager) downloadAndVerifyDatabase(url, name, tempDir string) 
 	dm.logger.Debugf("HTTP response headers: %v", resp.Header)
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to download database: HTTP %d", resp.StatusCode)
+		return fmt.Errorf("failed to download database: HTTP %d", resp.StatusCode)
 	}
 
-	// Create a gzip reader
+	// Create gzip reader
 	gzReader, err := gzip.NewReader(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create gzip reader: %w", err)
+		return fmt.Errorf("failed to create gzip reader: %w", err)
 	}
 	defer func() {
 		if err := gzReader.Close(); err != nil {
@@ -298,25 +360,26 @@ func (dm *DatabaseManager) downloadAndVerifyDatabase(url, name, tempDir string) 
 		}
 	}()
 
-	// Create a tar reader
-	tarReader := tar.NewReader(gzReader)
+	// Extract .mmdb file from tar
+	return dm.extractMMDBFromTar(tar.NewReader(gzReader), outputPath)
+}
 
-	// Extract the .mmdb file
-	tempPath := filepath.Join(tempDir, name+".mmdb")
+// extractMMDBFromTar extracts the .mmdb file from a tar reader
+func (dm *DatabaseManager) extractMMDBFromTar(tarReader *tar.Reader, outputPath string) error {
 	for {
 		header, err := tarReader.Next()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("failed to read tar file: %w", err)
+			return fmt.Errorf("failed to read tar file: %w", err)
 		}
 
 		if strings.HasSuffix(header.Name, ".mmdb") {
 			// Extract the database file
-			outFile, err := os.Create(tempPath)
+			outFile, err := os.Create(outputPath)
 			if err != nil {
-				return nil, fmt.Errorf("failed to create database file: %w", err)
+				return fmt.Errorf("failed to create database file: %w", err)
 			}
 			defer func() {
 				if err := outFile.Close(); err != nil {
@@ -325,41 +388,42 @@ func (dm *DatabaseManager) downloadAndVerifyDatabase(url, name, tempDir string) 
 			}()
 
 			if _, err := io.Copy(outFile, tarReader); err != nil {
-				return nil, fmt.Errorf("failed to extract database: %w", err)
+				return fmt.Errorf("failed to extract database: %w", err)
 			}
 
-			// Calculate checksum
-			checksum, err := dm.calculateFileChecksum(tempPath)
-			if err != nil {
-				return nil, fmt.Errorf("failed to calculate checksum: %w", err)
-			}
-
-			// Verify database can be opened
-			if err := dm.verifyDatabaseFile(tempPath); err != nil {
-				return nil, fmt.Errorf("database verification failed: %w", err)
-			}
-
-			// Get file info
-			fileInfo, err := os.Stat(tempPath)
-			if err != nil {
-				return nil, fmt.Errorf("failed to get file info: %w", err)
-			}
-
-			dbInfo := &DatabaseInfo{
-				Name:     name,
-				Path:     tempPath,
-				Size:     fileInfo.Size(),
-				ModTime:  fileInfo.ModTime(),
-				Checksum: checksum,
-			}
-
-			dm.logger.Infof("Successfully downloaded and verified %s database (size: %d bytes, checksum: %s)",
-				name, dbInfo.Size, dbInfo.Checksum[:8]+"...")
-			return dbInfo, nil
+			return nil
 		}
 	}
 
-	return nil, fmt.Errorf("no .mmdb file found in archive")
+	return fmt.Errorf("no .mmdb file found in archive")
+}
+
+// createVerifiedDatabaseInfo creates database info with checksum calculation and verification
+func (dm *DatabaseManager) createVerifiedDatabaseInfo(name, filePath string) (*DatabaseInfo, error) {
+	// Calculate checksum
+	checksum, err := dm.calculateFileChecksum(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to calculate checksum: %w", err)
+	}
+
+	// Verify database can be opened
+	if err := dm.verifyDatabaseFile(filePath); err != nil {
+		return nil, fmt.Errorf("database verification failed: %w", err)
+	}
+
+	// Get file info
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get file info: %w", err)
+	}
+
+	return &DatabaseInfo{
+		Name:     name,
+		Path:     filePath,
+		Size:     fileInfo.Size(),
+		ModTime:  fileInfo.ModTime(),
+		Checksum: checksum,
+	}, nil
 }
 
 // calculateFileChecksum calculates SHA256 checksum of a file
@@ -670,54 +734,14 @@ func (dm *DatabaseManager) GetGeoIPInfo(ip string) (*GeoIPInfo, error) {
 		}
 	}
 
-	// Parse IP
+	// Parse and validate IP
 	ipAddr := net.ParseIP(ip)
 	if ipAddr == nil {
 		return nil, fmt.Errorf("invalid IP address: %s", ip)
 	}
 
-	info := &GeoIPInfo{IP: ip}
-
-	// Use read lock for database access
-	dm.mu.RLock()
-	defer dm.mu.RUnlock()
-
-	// Get city information
-	if dm.cityDB != nil {
-		city, err := dm.cityDB.City(ipAddr)
-		if err == nil {
-			info.Country = city.Country.Names["en"]
-			info.CountryCode = city.Country.IsoCode
-			if len(city.Subdivisions) > 0 {
-				info.Region = city.Subdivisions[0].Names["en"]
-				info.RegionCode = city.Subdivisions[0].IsoCode
-			}
-			info.City = city.City.Names["en"]
-			info.Latitude = city.Location.Latitude
-			info.Longitude = city.Location.Longitude
-			info.PostalCode = city.Postal.Code
-			info.TimeZone = city.Location.TimeZone
-		}
-	}
-
-	// Get country information if city lookup failed
-	if info.Country == "" && dm.countryDB != nil {
-		country, err := dm.countryDB.Country(ipAddr)
-		if err == nil {
-			info.Country = country.Country.Names["en"]
-			info.CountryCode = country.Country.IsoCode
-		}
-	}
-
-	// Get ASN information
-	if dm.asnDB != nil {
-		asn, err := dm.asnDB.ASN(ipAddr)
-		if err == nil {
-			info.ASN = asn.AutonomousSystemNumber
-			info.ASNOrg = asn.AutonomousSystemOrganization
-			info.ISP = asn.AutonomousSystemOrganization
-		}
-	}
+	// Gather GeoIP information
+	info := dm.gatherGeoIPInfo(ip, ipAddr)
 
 	// Cache the result
 	if dm.cache != nil {
@@ -725,6 +749,83 @@ func (dm *DatabaseManager) GetGeoIPInfo(ip string) (*GeoIPInfo, error) {
 	}
 
 	return info, nil
+}
+
+// gatherGeoIPInfo collects GeoIP information from all available databases
+func (dm *DatabaseManager) gatherGeoIPInfo(ip string, ipAddr net.IP) *GeoIPInfo {
+	info := &GeoIPInfo{IP: ip}
+
+	// Use read lock for database access
+	dm.mu.RLock()
+	defer dm.mu.RUnlock()
+
+	// Get city information
+	dm.populateCityInfo(info, ipAddr)
+
+	// Get country information if city lookup failed
+	if info.Country == "" {
+		dm.populateCountryInfo(info, ipAddr)
+	}
+
+	// Get ASN information
+	dm.populateASNInfo(info, ipAddr)
+
+	return info
+}
+
+// populateCityInfo fills city-related information
+func (dm *DatabaseManager) populateCityInfo(info *GeoIPInfo, ipAddr net.IP) {
+	if dm.cityDB == nil {
+		return
+	}
+
+	city, err := dm.cityDB.City(ipAddr)
+	if err != nil {
+		return
+	}
+
+	info.Country = city.Country.Names["en"]
+	info.CountryCode = city.Country.IsoCode
+	if len(city.Subdivisions) > 0 {
+		info.Region = city.Subdivisions[0].Names["en"]
+		info.RegionCode = city.Subdivisions[0].IsoCode
+	}
+	info.City = city.City.Names["en"]
+	info.Latitude = city.Location.Latitude
+	info.Longitude = city.Location.Longitude
+	info.PostalCode = city.Postal.Code
+	info.TimeZone = city.Location.TimeZone
+}
+
+// populateCountryInfo fills country information as fallback
+func (dm *DatabaseManager) populateCountryInfo(info *GeoIPInfo, ipAddr net.IP) {
+	if dm.countryDB == nil {
+		return
+	}
+
+	country, err := dm.countryDB.Country(ipAddr)
+	if err != nil {
+		return
+	}
+
+	info.Country = country.Country.Names["en"]
+	info.CountryCode = country.Country.IsoCode
+}
+
+// populateASNInfo fills ASN and ISP information
+func (dm *DatabaseManager) populateASNInfo(info *GeoIPInfo, ipAddr net.IP) {
+	if dm.asnDB == nil {
+		return
+	}
+
+	asn, err := dm.asnDB.ASN(ipAddr)
+	if err != nil {
+		return
+	}
+
+	info.ASN = asn.AutonomousSystemNumber
+	info.ASNOrg = asn.AutonomousSystemOrganization
+	info.ISP = asn.AutonomousSystemOrganization
 }
 
 // GetCacheStats returns cache statistics

@@ -55,125 +55,109 @@ func (m *MockDatabaseManager) Close() error {
 	return nil
 }
 
-func TestJSONHandler(t *testing.T) {
-	logger := logrus.New()
-	logger.SetLevel(logrus.ErrorLevel) // Reduce noise in tests
+// Helper function to setup JSON handler router
+func setupJSONRouter(handler *APIHandler) *mux.Router {
+	router := mux.NewRouter()
+	router.HandleFunc("/", handler.middleware(handler.JSONHandler)).Methods("GET")
+	router.HandleFunc("/json", handler.middleware(handler.JSONHandler)).Methods("GET")
+	router.HandleFunc("/json/", handler.middleware(handler.JSONHandler)).Methods("GET")
+	router.HandleFunc("/json/{ip}", handler.middleware(handler.JSONHandler)).Methods("GET")
+	router.HandleFunc("/{ip}", handler.middleware(handler.JSONHandler)).Methods("GET")
+	return router
+}
 
+// Helper function to validate JSON response
+func validateJSONResponse(t *testing.T, rr *httptest.ResponseRecorder, expectedIP string) {
+	contentType := rr.Header().Get("Content-Type")
+	if contentType != "application/json" {
+		t.Errorf("handler returned wrong content type: got %v want application/json", contentType)
+	}
+
+	var response types.GeoIPInfo
+	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+		t.Errorf("Failed to decode JSON response: %v", err)
+	}
+
+	if response.IP != expectedIP {
+		t.Errorf("handler returned wrong IP: got %v want %v", response.IP, expectedIP)
+	}
+
+	if response.Country == "" {
+		t.Error("Country field is empty")
+	}
+	if response.CountryCode == "" {
+		t.Error("CountryCode field is empty")
+	}
+}
+
+// Helper function to validate JSON error response
+func validateJSONErrorResponse(t *testing.T, rr *httptest.ResponseRecorder) {
+	contentType := rr.Header().Get("Content-Type")
+	if contentType != "application/json" {
+		t.Errorf("error response should be JSON: got %v", contentType)
+	}
+}
+
+func TestJSONHandler_ValidEndpoints(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.ErrorLevel)
 	mockDB := &MockDatabaseManager{logger: logger}
 	handler := NewAPIHandler(mockDB, logger)
+	router := setupJSONRouter(handler)
 
 	tests := []struct {
-		name           string
-		method         string
-		path           string
-		expectedStatus int
-		expectedIP     string
+		name       string
+		path       string
+		expectedIP string
 	}{
-		{
-			name:           "JSON root endpoint",
-			method:         "GET",
-			path:           "/",
-			expectedStatus: 200,
-			expectedIP:     "192.0.2.1", // Test IP from request
-		},
-		{
-			name:           "JSON endpoint with IP",
-			method:         "GET",
-			path:           "/json/8.8.8.8",
-			expectedStatus: 200,
-			expectedIP:     "8.8.8.8",
-		},
-		{
-			name:           "JSON endpoint root with slash",
-			method:         "GET",
-			path:           "/json/",
-			expectedStatus: 200,
-			expectedIP:     "192.0.2.1",
-		},
-		{
-			name:           "JSON endpoint root without slash",
-			method:         "GET",
-			path:           "/json",
-			expectedStatus: 200,
-			expectedIP:     "192.0.2.1",
-		},
-		{
-			name:           "Specific IP endpoint",
-			method:         "GET",
-			path:           "/1.1.1.1",
-			expectedStatus: 200,
-			expectedIP:     "1.1.1.1",
-		},
-		{
-			name:           "Invalid IP endpoint",
-			method:         "GET",
-			path:           "/invalid-ip",
-			expectedStatus: 400,
-			expectedIP:     "",
-		},
+		{"JSON root endpoint", "/", "192.0.2.1"},
+		{"JSON endpoint with IP", "/json/8.8.8.8", "8.8.8.8"},
+		{"JSON endpoint root with slash", "/json/", "192.0.2.1"},
+		{"JSON endpoint root without slash", "/json", "192.0.2.1"},
+		{"Specific IP endpoint", "/1.1.1.1", "1.1.1.1"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req, err := http.NewRequest(tt.method, tt.path, nil)
+			req, err := http.NewRequest("GET", tt.path, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-
-			// Set a test IP for requests without IP in path
 			req.RemoteAddr = "192.0.2.1:12345"
 
 			rr := httptest.NewRecorder()
-			router := mux.NewRouter()
-
-			// Setup routes
-			router.HandleFunc("/", handler.middleware(handler.JSONHandler)).Methods("GET")
-			router.HandleFunc("/json", handler.middleware(handler.JSONHandler)).Methods("GET")
-			router.HandleFunc("/json/", handler.middleware(handler.JSONHandler)).Methods("GET")
-			router.HandleFunc("/json/{ip}", handler.middleware(handler.JSONHandler)).Methods("GET")
-			router.HandleFunc("/{ip}", handler.middleware(handler.JSONHandler)).Methods("GET")
-
 			router.ServeHTTP(rr, req)
 
-			if status := rr.Code; status != tt.expectedStatus {
-				t.Errorf("handler returned wrong status code: got %v want %v", status, tt.expectedStatus)
+			if status := rr.Code; status != http.StatusOK {
+				t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
 			}
 
-			switch tt.expectedStatus {
-			case 200:
-				// Check content type
-				contentType := rr.Header().Get("Content-Type")
-				if contentType != "application/json" {
-					t.Errorf("handler returned wrong content type: got %v want application/json", contentType)
-				}
-
-				// Parse JSON response
-				var response types.GeoIPInfo
-				if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
-					t.Errorf("Failed to decode JSON response: %v", err)
-				}
-
-				// Check if IP matches expected
-				if response.IP != tt.expectedIP {
-					t.Errorf("handler returned wrong IP: got %v want %v", response.IP, tt.expectedIP)
-				}
-
-				// Check if required fields are present
-				if response.Country == "" {
-					t.Error("Country field is empty")
-				}
-				if response.CountryCode == "" {
-					t.Error("CountryCode field is empty")
-				}
-			case 400:
-				// Check that error response is JSON
-				contentType := rr.Header().Get("Content-Type")
-				if contentType != "application/json" {
-					t.Errorf("error response should be JSON: got %v", contentType)
-				}
-			}
+			validateJSONResponse(t, rr, tt.expectedIP)
 		})
 	}
+}
+
+func TestJSONHandler_InvalidIP(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.ErrorLevel)
+	mockDB := &MockDatabaseManager{logger: logger}
+	handler := NewAPIHandler(mockDB, logger)
+	router := setupJSONRouter(handler)
+
+	req, err := http.NewRequest("GET", "/invalid-ip", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.RemoteAddr = "192.0.2.1:12345"
+
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if status := rr.Code; status != http.StatusBadRequest {
+		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusBadRequest)
+	}
+
+	validateJSONErrorResponse(t, rr)
 }
 
 func TestXMLHandler(t *testing.T) {
@@ -629,81 +613,87 @@ func TestSetupRoutes(t *testing.T) {
 }
 
 // Test error handling functions
-func TestErrorHandlers(t *testing.T) {
+// Helper function to setup handler for error tests
+func setupErrorTestHandler() (*APIHandler, *logrus.Logger) {
 	logger := logrus.New()
 	logger.SetLevel(logrus.ErrorLevel)
-
 	mockDB := &MockDatabaseManager{logger: logger}
-	handler := NewAPIHandler(mockDB, logger)
+	return NewAPIHandler(mockDB, logger), logger
+}
 
-	t.Run("sendJSONError", func(t *testing.T) {
-		rr := httptest.NewRecorder()
-		handler.sendJSONError(rr, http.StatusBadRequest, "test error")
+func TestSendJSONError(t *testing.T) {
+	handler, _ := setupErrorTestHandler()
 
-		if status := rr.Code; status != http.StatusBadRequest {
-			t.Errorf("Expected status %d, got %d", http.StatusBadRequest, status)
-		}
+	rr := httptest.NewRecorder()
+	handler.sendJSONError(rr, http.StatusBadRequest, "test error")
 
-		contentType := rr.Header().Get("Content-Type")
-		if contentType != "application/json" {
-			t.Errorf("Expected content type application/json, got %s", contentType)
-		}
+	if status := rr.Code; status != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, status)
+	}
 
-		var errorResponse struct {
-			Error     string `json:"error"`
-			Message   string `json:"message"`
-			Timestamp string `json:"timestamp"`
-			Status    int    `json:"status"`
-		}
-		if err := json.NewDecoder(rr.Body).Decode(&errorResponse); err != nil {
-			t.Errorf("Failed to decode JSON error response: %v", err)
-		}
+	contentType := rr.Header().Get("Content-Type")
+	if contentType != "application/json" {
+		t.Errorf("Expected content type application/json, got %s", contentType)
+	}
 
-		if errorResponse.Message != "test error" {
-			t.Errorf("Expected error message 'test error', got '%s'", errorResponse.Message)
-		}
-	})
+	var errorResponse struct {
+		Error     string `json:"error"`
+		Message   string `json:"message"`
+		Timestamp string `json:"timestamp"`
+		Status    int    `json:"status"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&errorResponse); err != nil {
+		t.Errorf("Failed to decode JSON error response: %v", err)
+	}
 
-	t.Run("sendXMLError", func(t *testing.T) {
-		rr := httptest.NewRecorder()
-		handler.sendXMLError(rr, http.StatusBadRequest, "test xml error")
+	if errorResponse.Message != "test error" {
+		t.Errorf("Expected error message 'test error', got '%s'", errorResponse.Message)
+	}
+}
 
-		if status := rr.Code; status != http.StatusBadRequest {
-			t.Errorf("Expected status %d, got %d", http.StatusBadRequest, status)
-		}
+func TestSendXMLError(t *testing.T) {
+	handler, _ := setupErrorTestHandler()
 
-		contentType := rr.Header().Get("Content-Type")
-		if contentType != "application/xml" {
-			t.Errorf("Expected content type application/xml, got %s", contentType)
-		}
+	rr := httptest.NewRecorder()
+	handler.sendXMLError(rr, http.StatusBadRequest, "test xml error")
 
-		body := rr.Body.String()
-		if !strings.Contains(body, "test xml error") {
-			t.Error("XML error response should contain error message")
-		}
-		if !strings.Contains(body, "<error>") {
-			t.Error("XML error response should contain error tags")
-		}
-	})
+	if status := rr.Code; status != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, status)
+	}
 
-	t.Run("sendCSVError", func(t *testing.T) {
-		rr := httptest.NewRecorder()
-		handler.sendCSVError(rr, http.StatusBadRequest, "test csv error")
+	contentType := rr.Header().Get("Content-Type")
+	if contentType != "application/xml" {
+		t.Errorf("Expected content type application/xml, got %s", contentType)
+	}
 
-		if status := rr.Code; status != http.StatusBadRequest {
-			t.Errorf("Expected status %d, got %d", http.StatusBadRequest, status)
-		}
+	body := rr.Body.String()
+	if !strings.Contains(body, "test xml error") {
+		t.Error("XML error response should contain error message")
+	}
+	if !strings.Contains(body, "<error>") {
+		t.Error("XML error response should contain error tags")
+	}
+}
 
-		contentType := rr.Header().Get("Content-Type")
-		if contentType != "text/plain" {
-			t.Errorf("Expected content type text/plain, got %s", contentType)
-		}
+func TestSendCSVError(t *testing.T) {
+	handler, _ := setupErrorTestHandler()
 
-		body := rr.Body.String()
-		if !strings.Contains(body, "test csv error") {
-			t.Error("CSV error response should contain error message")
-		}
-	})
+	rr := httptest.NewRecorder()
+	handler.sendCSVError(rr, http.StatusBadRequest, "test csv error")
+
+	if status := rr.Code; status != http.StatusBadRequest {
+		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, status)
+	}
+
+	contentType := rr.Header().Get("Content-Type")
+	if contentType != "text/plain" {
+		t.Errorf("Expected content type text/plain, got %s", contentType)
+	}
+
+	body := rr.Body.String()
+	if !strings.Contains(body, "test csv error") {
+		t.Error("CSV error response should contain error message")
+	}
 }
 
 // Test validateIP function

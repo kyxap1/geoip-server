@@ -39,13 +39,51 @@ func (cm *CertManager) GenerateSelfSignedCert(hosts string, validDays int) error
 	cm.logger.Info("Generating self-signed certificate...")
 
 	// Generate private key
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	privateKey, err := cm.generatePrivateKey()
 	if err != nil {
-		return fmt.Errorf("failed to generate private key: %w", err)
+		return err
 	}
 
-	// Create certificate template
-	template := x509.Certificate{
+	// Create certificate template and add hosts
+	template := cm.createCertificateTemplate(validDays)
+	cm.addHostsToTemplate(&template, hosts)
+
+	// Generate certificate
+	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
+	if err != nil {
+		return fmt.Errorf("failed to create certificate: %w", err)
+	}
+
+	// Create directory if it doesn't exist
+	if err := os.MkdirAll(filepath.Dir(cm.certPath), 0755); err != nil {
+		return fmt.Errorf("failed to create cert directory: %w", err)
+	}
+
+	// Save certificate and private key to files
+	if err := cm.saveCertificateToFile(certDER); err != nil {
+		return err
+	}
+
+	if err := cm.savePrivateKeyToFile(privateKey); err != nil {
+		return err
+	}
+
+	cm.logger.Infof("Self-signed certificate generated successfully: %s", cm.certPath)
+	return nil
+}
+
+// generatePrivateKey generates a new RSA private key
+func (cm *CertManager) generatePrivateKey() (*rsa.PrivateKey, error) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate private key: %w", err)
+	}
+	return privateKey, nil
+}
+
+// createCertificateTemplate creates a certificate template with basic configuration
+func (cm *CertManager) createCertificateTemplate(validDays int) x509.Certificate {
+	return x509.Certificate{
 		SerialNumber: big.NewInt(1),
 		Subject: pkix.Name{
 			Organization:  []string{"GeoIP Service"},
@@ -61,8 +99,10 @@ func (cm *CertManager) GenerateSelfSignedCert(hosts string, validDays int) error
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
 	}
+}
 
-	// Add hosts to certificate
+// addHostsToTemplate adds hosts to the certificate template
+func (cm *CertManager) addHostsToTemplate(template *x509.Certificate, hosts string) {
 	hostList := strings.Split(hosts, ",")
 	for _, host := range hostList {
 		host = strings.TrimSpace(host)
@@ -77,27 +117,13 @@ func (cm *CertManager) GenerateSelfSignedCert(hosts string, validDays int) error
 			template.DNSNames = append(template.DNSNames, host)
 		}
 	}
+}
 
-	// Generate certificate
-	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
-	if err != nil {
-		return fmt.Errorf("failed to create certificate: %w", err)
-	}
-
-	// Create directory if it doesn't exist
-	if err := os.MkdirAll(filepath.Dir(cm.certPath), 0755); err != nil {
-		return fmt.Errorf("failed to create cert directory: %w", err)
-	}
-
-	// Remove existing certificate file if it exists (it might have 400 permissions)
-	if _, err := os.Stat(cm.certPath); err == nil {
-		// Change permissions to allow deletion
-		if err := os.Chmod(cm.certPath, 0600); err != nil {
-			cm.logger.Warnf("Failed to change certificate file permissions: %v", err)
-		}
-		if err := os.Remove(cm.certPath); err != nil {
-			return fmt.Errorf("failed to remove existing cert file: %w", err)
-		}
+// saveCertificateToFile saves the certificate to a file
+func (cm *CertManager) saveCertificateToFile(certDER []byte) error {
+	// Remove existing certificate file if it exists
+	if err := cm.removeExistingFile(cm.certPath); err != nil {
+		return err
 	}
 
 	// Write certificate to file
@@ -120,15 +146,14 @@ func (cm *CertManager) GenerateSelfSignedCert(hosts string, validDays int) error
 		return fmt.Errorf("failed to set certificate file permissions: %w", err)
 	}
 
-	// Remove existing key file if it exists (it might have 400 permissions)
-	if _, err := os.Stat(cm.keyPath); err == nil {
-		// Change permissions to allow deletion
-		if err := os.Chmod(cm.keyPath, 0600); err != nil {
-			cm.logger.Warnf("Failed to change key file permissions: %v", err)
-		}
-		if err := os.Remove(cm.keyPath); err != nil {
-			return fmt.Errorf("failed to remove existing key file: %w", err)
-		}
+	return nil
+}
+
+// savePrivateKeyToFile saves the private key to a file
+func (cm *CertManager) savePrivateKeyToFile(privateKey *rsa.PrivateKey) error {
+	// Remove existing key file if it exists
+	if err := cm.removeExistingFile(cm.keyPath); err != nil {
+		return err
 	}
 
 	// Write private key to file
@@ -156,7 +181,20 @@ func (cm *CertManager) GenerateSelfSignedCert(hosts string, validDays int) error
 		return fmt.Errorf("failed to set private key file permissions: %w", err)
 	}
 
-	cm.logger.Infof("Self-signed certificate generated successfully: %s", cm.certPath)
+	return nil
+}
+
+// removeExistingFile removes an existing file if it exists
+func (cm *CertManager) removeExistingFile(filePath string) error {
+	if _, err := os.Stat(filePath); err == nil {
+		// Change permissions to allow deletion
+		if err := os.Chmod(filePath, 0600); err != nil {
+			cm.logger.Warnf("Failed to change file permissions: %v", err)
+		}
+		if err := os.Remove(filePath); err != nil {
+			return fmt.Errorf("failed to remove existing file %s: %w", filePath, err)
+		}
+	}
 	return nil
 }
 

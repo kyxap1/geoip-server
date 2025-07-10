@@ -1,0 +1,19 @@
+repos:
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v5.0.0
+  hooks:
+    - id: check-added-large-files
+    - id: check-merge-conflict
+    - id: no-commit-to-branch
+    - id: end-of-file-fixer
+    - id: trailing-whitespace
+      args: [--markdown-linebreak-ext=md]
+      verbose: false
+    - id: check-yaml
+      args: [--allow-multiple-documents]
+    - id: check-executables-have-shebangs
+    - id: check-case-conflict
+    - id: mixed-line-ending
+      args: [--fix=lf]
+    - id: detect-aws-credentials
+      args: ['--allow-missing-credentials']

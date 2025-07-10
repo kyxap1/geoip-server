@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   geoip-server:
     build:
@@ -14,8 +12,6 @@ services:
       - ./certs:/app/certs:ro
     networks:
       - geoip-network
-    depends_on:
-      - nginx
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/health"]
       interval: 30s

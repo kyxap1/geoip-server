@@ -35,7 +35,11 @@ func TestGeoIPServiceIntegration(t *testing.T) {
 	t.Run("HTTP API Integration", func(t *testing.T) {
 		// Create database manager (will fail to load real databases, but that's ok for API testing)
 		dbManager := geoip.NewDatabaseManager(tempDir, "test-license", logger, true, time.Hour, 1000)
-		defer dbManager.Close()
+		defer func() {
+			if err := dbManager.Close(); err != nil {
+				t.Logf("Failed to close database manager: %v", err)
+			}
+		}()
 
 		// Create API handler
 		apiHandler := handlers.NewAPIHandler(dbManager, logger)
@@ -52,7 +56,11 @@ func TestGeoIPServiceIntegration(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to make JSON request: %v", err)
 			}
-			defer resp.Body.Close()
+			defer func() {
+				if err := resp.Body.Close(); err != nil {
+					t.Logf("Failed to close response body: %v", err)
+				}
+			}()
 
 			// Should return some response structure even without databases
 			if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusInternalServerError {
@@ -72,7 +80,11 @@ func TestGeoIPServiceIntegration(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to make XML request: %v", err)
 			}
-			defer resp.Body.Close()
+			defer func() {
+				if err := resp.Body.Close(); err != nil {
+					t.Logf("Failed to close response body: %v", err)
+				}
+			}()
 
 			// Should return some response structure
 			if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusInternalServerError {
@@ -92,7 +104,11 @@ func TestGeoIPServiceIntegration(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to make CSV request: %v", err)
 			}
-			defer resp.Body.Close()
+			defer func() {
+				if err := resp.Body.Close(); err != nil {
+					t.Logf("Failed to close response body: %v", err)
+				}
+			}()
 
 			// Should return some response structure
 			if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusInternalServerError {
@@ -112,7 +128,11 @@ func TestGeoIPServiceIntegration(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to make health request: %v", err)
 			}
-			defer resp.Body.Close()
+			defer func() {
+				if err := resp.Body.Close(); err != nil {
+					t.Logf("Failed to close response body: %v", err)
+				}
+			}()
 
 			if resp.StatusCode != http.StatusOK {
 				t.Errorf("Health check should return 200, got %d", resp.StatusCode)
@@ -134,7 +154,11 @@ func TestGeoIPServiceIntegration(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to make stats request: %v", err)
 			}
-			defer resp.Body.Close()
+			defer func() {
+				if err := resp.Body.Close(); err != nil {
+					t.Logf("Failed to close response body: %v", err)
+				}
+			}()
 
 			if resp.StatusCode != http.StatusOK {
 				t.Errorf("Stats should return 200, got %d", resp.StatusCode)
@@ -158,7 +182,11 @@ func TestGeoIPServiceIntegration(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to make invalid IP request: %v", err)
 			}
-			defer resp.Body.Close()
+			defer func() {
+				if err := resp.Body.Close(); err != nil {
+					t.Logf("Failed to close response body: %v", err)
+				}
+			}()
 
 			if resp.StatusCode != http.StatusBadRequest {
 				t.Errorf("Invalid IP should return 400, got %d", resp.StatusCode)
@@ -171,7 +199,11 @@ func TestGeoIPServiceIntegration(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to make CORS request: %v", err)
 			}
-			defer resp.Body.Close()
+			defer func() {
+				if err := resp.Body.Close(); err != nil {
+					t.Logf("Failed to close response body: %v", err)
+				}
+			}()
 
 			// Check CORS headers
 			corsOrigin := resp.Header.Get("Access-Control-Allow-Origin")
@@ -189,7 +221,11 @@ func TestGeoIPServiceIntegration(t *testing.T) {
 	t.Run("Database Manager Integration", func(t *testing.T) {
 		// Test database manager functionality
 		dbManager := geoip.NewDatabaseManager(tempDir, "test-license", logger, true, time.Minute, 100)
-		defer dbManager.Close()
+		defer func() {
+			if err := dbManager.Close(); err != nil {
+				t.Logf("Failed to close database manager: %v", err)
+			}
+		}()
 
 		// Test GetDatabaseStatus
 		status := dbManager.GetDatabaseStatus()
@@ -278,7 +314,11 @@ logging:
 	t.Run("Mock GeoIP Data Flow", func(t *testing.T) {
 		// Test the data flow with mock data
 		dbManager := geoip.NewDatabaseManager(tempDir, "test-license", logger, true, time.Minute, 10)
-		defer dbManager.Close()
+		defer func() {
+			if err := dbManager.Close(); err != nil {
+				t.Logf("Failed to close database manager: %v", err)
+			}
+		}()
 
 		// Test that GetGeoIPInfo returns proper structure
 		info, err := dbManager.GetGeoIPInfo("8.8.8.8")
@@ -315,7 +355,11 @@ logging:
 	t.Run("Concurrent Access Integration", func(t *testing.T) {
 		// Test concurrent access to the system
 		dbManager := geoip.NewDatabaseManager(tempDir, "test-license", logger, true, time.Minute, 100)
-		defer dbManager.Close()
+		defer func() {
+			if err := dbManager.Close(); err != nil {
+				t.Logf("Failed to close database manager: %v", err)
+			}
+		}()
 
 		apiHandler := handlers.NewAPIHandler(dbManager, logger)
 		router := apiHandler.SetupRoutes()
@@ -331,7 +375,10 @@ logging:
 			for i := 0; i < 10; i++ {
 				resp, err := http.Get(fmt.Sprintf("%s/json/192.168.1.%d", server.URL, i%5+1))
 				if err == nil {
-					resp.Body.Close()
+					if cerr := resp.Body.Close(); cerr != nil {
+						// Note: logging in goroutines can be problematic, just ignore error
+						_ = cerr
+					}
 				}
 			}
 		}()
@@ -342,7 +389,10 @@ logging:
 			for i := 0; i < 10; i++ {
 				resp, err := http.Get(fmt.Sprintf("%s/xml/10.0.0.%d", server.URL, i%5+1))
 				if err == nil {
-					resp.Body.Close()
+					if cerr := resp.Body.Close(); cerr != nil {
+						// Note: logging in goroutines can be problematic, just ignore error
+						_ = cerr
+					}
 				}
 			}
 		}()
@@ -353,7 +403,10 @@ logging:
 			for i := 0; i < 5; i++ {
 				resp, err := http.Get(server.URL + "/health")
 				if err == nil {
-					resp.Body.Close()
+					if cerr := resp.Body.Close(); cerr != nil {
+						// Note: logging in goroutines can be problematic, just ignore error
+						_ = cerr
+					}
 				}
 			}
 		}()
@@ -368,7 +421,11 @@ logging:
 		if err != nil {
 			t.Fatalf("System should be responsive after concurrent access: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() {
+			if err := resp.Body.Close(); err != nil {
+				t.Logf("Failed to close response body: %v", err)
+			}
+		}()
 
 		if resp.StatusCode != http.StatusOK {
 			t.Error("System should return 200 for health check after concurrent access")
@@ -409,7 +466,11 @@ func BenchmarkIntegrationAPI(b *testing.B) {
 	logger.SetLevel(logrus.ErrorLevel)
 
 	dbManager := geoip.NewDatabaseManager(tempDir, "test-license", logger, true, time.Hour, 1000)
-	defer dbManager.Close()
+	defer func() {
+		if err := dbManager.Close(); err != nil {
+			b.Logf("Failed to close database manager: %v", err)
+		}
+	}()
 
 	apiHandler := handlers.NewAPIHandler(dbManager, logger)
 	router := apiHandler.SetupRoutes()
@@ -431,7 +492,10 @@ func BenchmarkIntegrationAPI(b *testing.B) {
 			ip := testIPs[i%len(testIPs)]
 			resp, err := http.Get(server.URL + "/json/" + ip)
 			if err == nil {
-				resp.Body.Close()
+				if cerr := resp.Body.Close(); cerr != nil {
+					// Ignore error in benchmark
+					_ = cerr
+				}
 			}
 			i++
 		}

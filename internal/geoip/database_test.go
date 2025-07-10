@@ -546,7 +546,7 @@ func TestDatabaseManager_CheckForUpdates(t *testing.T) {
 	}
 
 	// Test check for updates with existing databases
-	hasUpdates, err = dbManager.CheckForUpdates()
+	_, err = dbManager.CheckForUpdates()
 	if err != nil {
 		t.Errorf("CheckForUpdates should not return error with existing databases: %v", err)
 	}
@@ -671,7 +671,11 @@ func TestDatabaseManager_Concurrency(t *testing.T) {
 	logger.SetLevel(logrus.ErrorLevel)
 
 	dbManager := NewDatabaseManager(tempDir, "test-license", logger, true, time.Hour, 100)
-	defer dbManager.Close()
+	defer func() {
+		if err := dbManager.Close(); err != nil {
+			t.Logf("Failed to close database manager: %v", err)
+		}
+	}()
 
 	// Test concurrent access to various methods
 	done := make(chan bool, 4)

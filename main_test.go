@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -16,7 +15,6 @@ import (
 
 	"golang-geoip/internal/config"
 	"golang-geoip/internal/geoip"
-	"golang-geoip/internal/types"
 )
 
 func TestMaskLicenseKey(t *testing.T) {
@@ -253,7 +251,9 @@ func TestCLICommands(t *testing.T) {
 		err := statusCmd.RunE(cmd, []string{})
 
 		// Restore stdout
-		w.Close()
+		if cerr := w.Close(); cerr != nil {
+			t.Logf("Failed to close pipe writer: %v", cerr)
+		}
 		os.Stdout = old
 
 		// Read captured output
@@ -280,7 +280,9 @@ func TestCLICommands(t *testing.T) {
 		err := rollbackCmd.RunE(cmd, []string{})
 
 		// Restore stdout
-		w.Close()
+		if cerr := w.Close(); cerr != nil {
+			t.Logf("Failed to close pipe writer: %v", cerr)
+		}
 		os.Stdout = old
 
 		// This might fail due to no backups, but should not panic
@@ -306,7 +308,9 @@ func TestCLICommands(t *testing.T) {
 		versionCmd.Run(cmd, []string{})
 
 		// Restore stdout
-		w.Close()
+		if cerr := w.Close(); cerr != nil {
+			t.Logf("Failed to close pipe writer: %v", cerr)
+		}
 		os.Stdout = old
 
 		// Read captured output
@@ -384,7 +388,9 @@ func TestCertificateCommands(t *testing.T) {
 		err = certInfoCmd.RunE(cmd, []string{})
 
 		// Restore stdout
-		w.Close()
+		if cerr := w.Close(); cerr != nil {
+			t.Logf("Failed to close pipe writer: %v", cerr)
+		}
 		os.Stdout = old
 
 		if err != nil {
@@ -514,58 +520,6 @@ func TestCommandStructure(t *testing.T) {
 			t.Error("Version command should have Run function")
 		}
 	})
-}
-
-// Mock database manager for testing
-type mockDatabaseManager struct {
-	closeCalled bool
-	closeError  error
-}
-
-func (m *mockDatabaseManager) Initialize() error {
-	return nil
-}
-
-func (m *mockDatabaseManager) Close() error {
-	m.closeCalled = true
-	return m.closeError
-}
-
-func (m *mockDatabaseManager) UpdateDatabases() error {
-	return fmt.Errorf("mock update error")
-}
-
-func (m *mockDatabaseManager) GetDatabaseStatus() map[string]interface{} {
-	return map[string]interface{}{
-		"test-db": map[string]interface{}{
-			"exists": false,
-			"error":  "mock database not found",
-		},
-	}
-}
-
-func (m *mockDatabaseManager) RollbackDatabases() error {
-	return fmt.Errorf("mock rollback error")
-}
-
-func (m *mockDatabaseManager) GetGeoIPInfo(ip string) (*types.GeoIPInfo, error) {
-	return nil, fmt.Errorf("mock geoip error")
-}
-
-func (m *mockDatabaseManager) GetCacheStats() map[string]interface{} {
-	return map[string]interface{}{
-		"cache_enabled": false,
-		"hits":          0,
-		"misses":        0,
-	}
-}
-
-func (m *mockDatabaseManager) LoadDatabases() error {
-	return nil
-}
-
-func (m *mockDatabaseManager) CheckForUpdates() (bool, error) {
-	return false, nil
 }
 
 // Helper functions for tests

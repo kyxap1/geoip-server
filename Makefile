@@ -1,7 +1,27 @@
-.PHONY: test test-unit test-integration test-coverage test-coverage-full test-race test-bench clean build help
+.PHONY: test test-unit test-integration test-coverage test-coverage-full test-race test-bench clean build help deps verify vet lint docker-build
 
 # Default target
 .DEFAULT_GOAL := help
+
+# Download dependencies
+deps:
+	@echo "Downloading dependencies..."
+	@go mod download
+
+# Verify dependencies
+verify:
+	@echo "Verifying dependencies..."
+	@go mod verify
+
+# Run go vet
+vet:
+	@echo "Running go vet..."
+	@go vet ./...
+
+# Run golangci-lint
+lint:
+	@echo "Running golangci-lint..."
+	@golangci-lint run --timeout=5m
 
 # Build the application
 build:
@@ -54,6 +74,15 @@ test-bench:
 	@echo "Running benchmarks..."
 	@go test -bench=. -test.short=false ./...
 
+# Build Docker image (for local development)
+docker-build:
+	@echo "Building Docker image..."
+	@docker build --build-arg DATE="$(shell date -u +%Y%m%d-%H%M%S)" -t geoip-server:latest .
+
+# CI pipeline - full check sequence
+ci: deps verify vet lint test-race
+	@echo "All CI checks passed!"
+
 # Clean build artifacts and coverage files
 clean:
 	@echo "Cleaning up..."
@@ -63,6 +92,10 @@ clean:
 help:
 	@echo ""
 	@echo "Available targets:"
+	@echo "  deps               Download dependencies"
+	@echo "  verify             Verify dependencies"
+	@echo "  vet                Run go vet"
+	@echo "  lint               Run golangci-lint"
 	@echo "  build              Build the application"
 	@echo "  test-unit          Run unit tests only (internal packages)"
 	@echo "  test               Run all tests (excluding integration)"
@@ -72,10 +105,13 @@ help:
 	@echo "  test-coverage      Generate coverage report (excluding integration)"
 	@echo "  test-coverage-full Generate coverage report (including integration)"
 	@echo "  test-bench         Run benchmarks"
+	@echo "  docker-build       Build Docker image"
+	@echo "  ci                 Run full CI pipeline (deps+verify+vet+lint+test-race)"
 	@echo "  clean              Clean build artifacts"
 	@echo "  help               Show this help message"
 	@echo ""
 	@echo "Quick commands:"
+	@echo "  make ci                 # Full CI pipeline"
 	@echo "  make test-coverage-full # Full coverage with integration tests"
 	@echo "  make test-race          # All tests with race detection"
 	@echo "  make test               # Fast tests without integration"

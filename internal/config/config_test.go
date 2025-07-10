@@ -73,7 +73,9 @@ func TestLoadConfig_WithEnvironmentVariables(t *testing.T) {
 
 	// Set environment variables
 	for key, value := range envVars {
-		os.Setenv(key, value)
+		if err := os.Setenv(key, value); err != nil {
+			t.Fatalf("Failed to set environment variable %s: %v", key, err)
+		}
 	}
 	defer clearConfigEnvVars()
 
@@ -147,11 +149,19 @@ func TestGetEnvStr(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Clean up environment
-			os.Unsetenv(tt.envKey)
+			if err := os.Unsetenv(tt.envKey); err != nil {
+				t.Fatalf("Failed to unset environment variable %s: %v", tt.envKey, err)
+			}
 
 			if tt.envValue != "" {
-				os.Setenv(tt.envKey, tt.envValue)
-				defer os.Unsetenv(tt.envKey)
+				if err := os.Setenv(tt.envKey, tt.envValue); err != nil {
+					t.Fatalf("Failed to set environment variable %s: %v", tt.envKey, err)
+				}
+				defer func() {
+					if err := os.Unsetenv(tt.envKey); err != nil {
+						t.Logf("Failed to unset environment variable %s: %v", tt.envKey, err)
+					}
+				}()
 			}
 
 			result := getEnvStr(tt.envKey, tt.defaultValue)
@@ -209,11 +219,14 @@ func TestGetEnvInt(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			os.Unsetenv(tt.envKey)
+			if err := os.Unsetenv(tt.envKey); err != nil {
+				t.Fatalf("Failed to unset environment variable %s: %v", tt.envKey, err)
+			}
 
 			if tt.envValue != "" {
-				os.Setenv(tt.envKey, tt.envValue)
-				defer os.Unsetenv(tt.envKey)
+				if err := os.Setenv(tt.envKey, tt.envValue); err != nil {
+					t.Fatalf("Failed to set environment variable %s: %v", tt.envKey, err)
+				}
 			}
 
 			result := getEnvInt(tt.envKey, tt.defaultValue)
@@ -278,11 +291,14 @@ func TestGetEnvBool(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			os.Unsetenv(tt.envKey)
+			if err := os.Unsetenv(tt.envKey); err != nil {
+				t.Fatalf("Failed to unset environment variable %s: %v", tt.envKey, err)
+			}
 
 			if tt.envValue != "" {
-				os.Setenv(tt.envKey, tt.envValue)
-				defer os.Unsetenv(tt.envKey)
+				if err := os.Setenv(tt.envKey, tt.envValue); err != nil {
+					t.Fatalf("Failed to set environment variable %s: %v", tt.envKey, err)
+				}
 			}
 
 			result := getEnvBool(tt.envKey, tt.defaultValue)
@@ -347,11 +363,14 @@ func TestGetEnvDuration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			os.Unsetenv(tt.envKey)
+			if err := os.Unsetenv(tt.envKey); err != nil {
+				t.Fatalf("Failed to unset environment variable %s: %v", tt.envKey, err)
+			}
 
 			if tt.envValue != "" {
-				os.Setenv(tt.envKey, tt.envValue)
-				defer os.Unsetenv(tt.envKey)
+				if err := os.Setenv(tt.envKey, tt.envValue); err != nil {
+					t.Fatalf("Failed to set environment variable %s: %v", tt.envKey, err)
+				}
 			}
 
 			result := getEnvDuration(tt.envKey, tt.defaultValue)
@@ -374,8 +393,14 @@ func TestCertPathFieldSpecifically(t *testing.T) {
 	})
 
 	t.Run("CertPath from environment", func(t *testing.T) {
-		os.Setenv("CERT_PATH", "/my/custom/cert/path")
-		defer os.Unsetenv("CERT_PATH")
+		if err := os.Setenv("CERT_PATH", "/my/custom/cert/path"); err != nil {
+			t.Fatalf("Failed to set environment variable CERT_PATH: %v", err)
+		}
+		defer func() {
+			if err := os.Unsetenv("CERT_PATH"); err != nil {
+				t.Logf("Failed to unset environment variable CERT_PATH: %v", err)
+			}
+		}()
 
 		cfg := LoadConfig()
 		if cfg.CertPath != "/my/custom/cert/path" {
@@ -384,8 +409,14 @@ func TestCertPathFieldSpecifically(t *testing.T) {
 	})
 
 	t.Run("CertPath empty environment variable", func(t *testing.T) {
-		os.Setenv("CERT_PATH", "")
-		defer os.Unsetenv("CERT_PATH")
+		if err := os.Setenv("CERT_PATH", ""); err != nil {
+			t.Fatalf("Failed to set environment variable CERT_PATH: %v", err)
+		}
+		defer func() {
+			if err := os.Unsetenv("CERT_PATH"); err != nil {
+				t.Logf("Failed to unset environment variable CERT_PATH: %v", err)
+			}
+		}()
 
 		cfg := LoadConfig()
 		if cfg.CertPath != "./certs" {
@@ -431,7 +462,8 @@ func clearConfigEnvVars() {
 	}
 
 	for _, envVar := range envVars {
-		os.Unsetenv(envVar)
+		// Ignore errors for cleanup as environment variables might not have been set
+		_ = os.Unsetenv(envVar)
 	}
 }
 
@@ -445,8 +477,14 @@ func BenchmarkLoadConfig(b *testing.B) {
 }
 
 func BenchmarkGetEnvStr(b *testing.B) {
-	os.Setenv("BENCH_TEST", "test_value")
-	defer os.Unsetenv("BENCH_TEST")
+	if err := os.Setenv("BENCH_TEST", "test_value"); err != nil {
+		b.Fatalf("Failed to set environment variable BENCH_TEST: %v", err)
+	}
+	defer func() {
+		if err := os.Unsetenv("BENCH_TEST"); err != nil {
+			b.Logf("Failed to unset environment variable BENCH_TEST: %v", err)
+		}
+	}()
 
 	for i := 0; i < b.N; i++ {
 		getEnvStr("BENCH_TEST", "default")

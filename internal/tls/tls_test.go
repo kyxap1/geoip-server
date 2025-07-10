@@ -240,9 +240,8 @@ func TestLoadTLSConfig(t *testing.T) {
 		if len(tlsConfig.Certificates) != 1 {
 			t.Errorf("Expected 1 certificate, got %d", len(tlsConfig.Certificates))
 		}
-		if !tlsConfig.PreferServerCipherSuites {
-			t.Error("Expected PreferServerCipherSuites to be true")
-		}
+		// Note: PreferServerCipherSuites is deprecated since Go 1.18 and ignored
+		// The server cipher suite preferences are now automatically used when needed
 	})
 
 	t.Run("Load TLS config without certificates", func(t *testing.T) {

@@ -18,7 +18,7 @@ import (
 	"golang-geoip/internal/cache"
 	"golang-geoip/internal/types"
 
-	"github.com/oschwald/geoip2-golang"
+	geoip2 "github.com/oschwald/geoip2-golang"
 	"github.com/sirupsen/logrus"
 )
 
@@ -163,15 +163,21 @@ func (dm *DatabaseManager) closeConnections() {
 // closeConnectionsUnsafe closes all database connections (not thread-safe)
 func (dm *DatabaseManager) closeConnectionsUnsafe() {
 	if dm.cityDB != nil {
-		dm.cityDB.Close()
+		if err := dm.cityDB.Close(); err != nil {
+			dm.logger.Warnf("Failed to close city database: %v", err)
+		}
 		dm.cityDB = nil
 	}
 	if dm.countryDB != nil {
-		dm.countryDB.Close()
+		if err := dm.countryDB.Close(); err != nil {
+			dm.logger.Warnf("Failed to close country database: %v", err)
+		}
 		dm.countryDB = nil
 	}
 	if dm.asnDB != nil {
-		dm.asnDB.Close()
+		if err := dm.asnDB.Close(); err != nil {
+			dm.logger.Warnf("Failed to close ASN database: %v", err)
+		}
 		dm.asnDB = nil
 	}
 }
@@ -194,7 +200,11 @@ func (dm *DatabaseManager) UpdateDatabases() error {
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		return fmt.Errorf("failed to create temp directory: %w", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() {
+		if err := os.RemoveAll(tempDir); err != nil {
+			dm.logger.Warnf("Failed to remove temp directory during cleanup: %v", err)
+		}
+	}()
 
 	// Download and verify all databases first
 	var newDatabases []DatabaseInfo
@@ -264,7 +274,11 @@ func (dm *DatabaseManager) downloadAndVerifyDatabase(url, name, tempDir string) 
 	if err != nil {
 		return nil, fmt.Errorf("failed to download database: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			dm.logger.Warnf("Failed to close response body: %v", err)
+		}
+	}()
 
 	dm.logger.Debugf("HTTP response status: %d %s", resp.StatusCode, resp.Status)
 	dm.logger.Debugf("HTTP response headers: %v", resp.Header)
@@ -278,7 +292,11 @@ func (dm *DatabaseManager) downloadAndVerifyDatabase(url, name, tempDir string) 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gzip reader: %w", err)
 	}
-	defer gzReader.Close()
+	defer func() {
+		if err := gzReader.Close(); err != nil {
+			dm.logger.Warnf("Failed to close gzip reader: %v", err)
+		}
+	}()
 
 	// Create a tar reader
 	tarReader := tar.NewReader(gzReader)
@@ -300,7 +318,11 @@ func (dm *DatabaseManager) downloadAndVerifyDatabase(url, name, tempDir string) 
 			if err != nil {
 				return nil, fmt.Errorf("failed to create database file: %w", err)
 			}
-			defer outFile.Close()
+			defer func() {
+				if err := outFile.Close(); err != nil {
+					dm.logger.Warnf("Failed to close database file: %v", err)
+				}
+			}()
 
 			if _, err := io.Copy(outFile, tarReader); err != nil {
 				return nil, fmt.Errorf("failed to extract database: %w", err)
@@ -346,7 +368,11 @@ func (dm *DatabaseManager) calculateFileChecksum(filePath string) (string, error
 	if err != nil {
 		return "", err
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			dm.logger.Warnf("Failed to close file %s: %v", filePath, err)
+		}
+	}()
 
 	hash := sha256.New()
 	if _, err := io.Copy(hash, file); err != nil {
@@ -360,9 +386,13 @@ func (dm *DatabaseManager) calculateFileChecksum(filePath string) (string, error
 func (dm *DatabaseManager) verifyDatabaseFile(filePath string) error {
 	db, err := geoip2.Open(filePath)
 	if err != nil {
-		return fmt.Errorf("failed to open database: %w", err)
+		return err
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			dm.logger.Warnf("Failed to close database file %s: %v", filePath, err)
+		}
+	}()
 
 	// Try a basic lookup to ensure the database is functional
 	testIP := net.ParseIP("8.8.8.8")
@@ -452,7 +482,9 @@ func (dm *DatabaseManager) backupCurrentDatabases() error {
 		checksumSrc := filepath.Join(dm.dbPath, name+".checksum")
 		checksumBackup := filepath.Join(backupDir, fmt.Sprintf("%s-%s.checksum", name, timestamp))
 		if _, err := os.Stat(checksumSrc); err == nil {
-			dm.copyFile(checksumSrc, checksumBackup) // Ignore errors for checksum backup
+			if err := dm.copyFile(checksumSrc, checksumBackup); err != nil {
+				return fmt.Errorf("failed to backup checksum for %s: %w", name, err)
+			}
 		}
 
 		dm.logger.Infof("Backed up %s to %s", name, backupPath)
@@ -510,7 +542,9 @@ func (dm *DatabaseManager) rollbackDatabases() error {
 		checksumBackup := filepath.Join(backupDir, fmt.Sprintf("%s-%s.checksum", name, latestBackup))
 		checksumProd := filepath.Join(dm.dbPath, name+".checksum")
 		if _, err := os.Stat(checksumBackup); err == nil {
-			dm.copyFile(checksumBackup, checksumProd) // Ignore errors
+			if err := dm.copyFile(checksumBackup, checksumProd); err != nil {
+				return fmt.Errorf("failed to restore checksum for %s: %w", name, err)
+			}
 		}
 
 		dm.logger.Infof("Restored %s from backup", name)
@@ -607,13 +641,21 @@ func (dm *DatabaseManager) copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer srcFile.Close()
+	defer func() {
+		if err := srcFile.Close(); err != nil {
+			dm.logger.Warnf("Failed to close source file %s: %v", src, err)
+		}
+	}()
 
 	dstFile, err := os.Create(dst)
 	if err != nil {
 		return err
 	}
-	defer dstFile.Close()
+	defer func() {
+		if err := dstFile.Close(); err != nil {
+			dm.logger.Warnf("Failed to close destination file %s: %v", dst, err)
+		}
+	}()
 
 	_, err = io.Copy(dstFile, srcFile)
 	return err

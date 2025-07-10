@@ -28,16 +28,13 @@ jobs:
   lint:
     name: Lint Code
     runs-on: ubuntu-latest
-
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
-        go-version: '1.23'
-
+        go-version: '1.24'
     - name: Run golangci-lint
       uses: golangci/golangci-lint-action@v3
       with:
@@ -49,7 +46,6 @@ jobs:
     needs: [lint]
     runs-on: ubuntu-latest
     if: always() && !cancelled() && success() && !inputs.skip_tests
-
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -57,7 +53,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
-        go-version: '1.23'
+        go-version: '1.24'
 
     - name: Cache Go modules
       uses: actions/cache@v3

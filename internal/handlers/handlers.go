@@ -52,7 +52,9 @@ func (h *APIHandler) sendJSONError(w http.ResponseWriter, statusCode int, errorM
 		Status:    statusCode,
 	}
 
-	json.NewEncoder(w).Encode(errorResponse)
+	if err := json.NewEncoder(w).Encode(errorResponse); err != nil {
+		h.logger.Errorf("Failed to encode JSON error response: %v", err)
+	}
 }
 
 // sendXMLError sends a standardized XML error response
@@ -67,8 +69,13 @@ func (h *APIHandler) sendXMLError(w http.ResponseWriter, statusCode int, errorMs
 		Status:    statusCode,
 	}
 
-	w.Write([]byte(xml.Header))
-	xml.NewEncoder(w).Encode(errorResponse)
+	if _, err := w.Write([]byte(xml.Header)); err != nil {
+		h.logger.Errorf("Failed to write XML header: %v", err)
+		return
+	}
+	if err := xml.NewEncoder(w).Encode(errorResponse); err != nil {
+		h.logger.Errorf("Failed to encode XML error response: %v", err)
+	}
 }
 
 // sendCSVError sends a standardized CSV error response
@@ -83,7 +90,9 @@ func (h *APIHandler) sendCSVError(w http.ResponseWriter, statusCode int, errorMs
 		time.Now().Format(time.RFC3339),
 	)
 
-	w.Write([]byte(errorResponse))
+	if _, err := w.Write([]byte(errorResponse)); err != nil {
+		h.logger.Errorf("Failed to write CSV error response: %v", err)
+	}
 }
 
 // validateIP validates if the given string is a valid IP address
@@ -260,9 +269,12 @@ func (h *APIHandler) XMLHandler(w http.ResponseWriter, r *http.Request) {
 
 	response := XMLResponse{GeoIPInfo: info}
 
-	// Set content type and encode XML
+	// Set content type and write XML header
 	w.Header().Set("Content-Type", "application/xml")
-	w.Write([]byte(xml.Header))
+	if _, err := w.Write([]byte(xml.Header)); err != nil {
+		h.logger.Errorf("Failed to write XML header: %v", err)
+		return
+	}
 	if err := xml.NewEncoder(w).Encode(response); err != nil {
 		h.sendXMLError(w, http.StatusInternalServerError, "Failed to encode XML response")
 		return
@@ -338,20 +350,22 @@ func (h *APIHandler) CSVHandler(w http.ResponseWriter, r *http.Request) {
 // HealthHandler handles health check requests
 func (h *APIHandler) HealthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
-		"status": "healthy",
-		"time":   time.Now().Format(time.RFC3339),
-	})
+	if err := json.NewEncoder(w).Encode(map[string]string{
+		"status":    "healthy",
+		"timestamp": time.Now().Format(time.RFC3339),
+	}); err != nil {
+		h.logger.Errorf("Failed to encode health check response: %v", err)
+	}
 }
 
-// StatsHandler handles cache statistics requests
+// StatsHandler handles statistics requests
 func (h *APIHandler) StatsHandler(w http.ResponseWriter, r *http.Request) {
 	stats := h.dbManager.GetCacheStats()
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(stats)
+	if err := json.NewEncoder(w).Encode(stats); err != nil {
+		h.logger.Errorf("Failed to encode stats response: %v", err)
+	}
 }
 
 // SetupRoutes configures all HTTP routes

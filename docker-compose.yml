@@ -9,11 +9,11 @@ services:
       - .env
     volumes:
       - geoip-data:/app/data
-      - ./certs:/app/certs:ro
+      - ./certs:/app/certs
     networks:
       - geoip-network
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
       interval: 30s
       timeout: 10s
       retries: 3

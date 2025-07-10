@@ -14,6 +14,7 @@ type Config struct {
 	EnableTLS bool   `json:"enable_tls"`
 	CertFile  string `json:"cert_file"`
 	KeyFile   string `json:"key_file"`
+	CertPath  string `json:"cert_path"`
 
 	// Database configuration
 	DBPath         string `json:"db_path"`
@@ -43,6 +44,7 @@ func LoadConfig() *Config {
 		EnableTLS:       getEnvBool("ENABLE_TLS", false),
 		CertFile:        getEnvStr("CERT_FILE", ""),
 		KeyFile:         getEnvStr("KEY_FILE", ""),
+		CertPath:        getEnvStr("CERT_PATH", "./certs"),
 		DBPath:          getEnvStr("DB_PATH", "./data"),
 		UpdateInterval:  getEnvStr("UPDATE_INTERVAL", "0 0 */2 * *"), // Every 2 days
 		AutoUpdate:      getEnvBool("AUTO_UPDATE", true),

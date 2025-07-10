@@ -100,6 +100,11 @@ func (cm *CertManager) GenerateSelfSignedCert(hosts string, validDays int) error
 		return fmt.Errorf("failed to write certificate: %w", err)
 	}
 
+	// Set certificate file permissions to 400
+	if err := os.Chmod(cm.certPath, 0400); err != nil {
+		return fmt.Errorf("failed to set certificate file permissions: %w", err)
+	}
+
 	// Write private key to file
 	keyFile, err := os.Create(cm.keyPath)
 	if err != nil {
@@ -114,6 +119,11 @@ func (cm *CertManager) GenerateSelfSignedCert(hosts string, validDays int) error
 
 	if err := pem.Encode(keyFile, &pem.Block{Type: "PRIVATE KEY", Bytes: privateKeyDER}); err != nil {
 		return fmt.Errorf("failed to write private key: %w", err)
+	}
+
+	// Set private key file permissions to 400
+	if err := os.Chmod(cm.keyPath, 0400); err != nil {
+		return fmt.Errorf("failed to set private key file permissions: %w", err)
 	}
 
 	cm.logger.Infof("Self-signed certificate generated successfully: %s", cm.certPath)

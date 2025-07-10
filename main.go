@@ -27,6 +27,17 @@ var (
 	logger *logrus.Logger
 )
 
+// maskLicenseKey masks a license key showing only first 10 and last 3 characters
+func maskLicenseKey(key string) string {
+	if key == "" {
+		return ""
+	}
+	if len(key) <= 13 {
+		return key // Don't mask short keys
+	}
+	return key[:10] + "..." + key[len(key)-3:]
+}
+
 func init() {
 	// Initialize logger
 	logger = logrus.New()
@@ -60,8 +71,31 @@ func main() {
 	rootCmd.PersistentFlags().BoolVar(&cfg.EnableTLS, "enable-tls", cfg.EnableTLS, "Enable TLS/HTTPS")
 	rootCmd.PersistentFlags().StringVar(&cfg.CertFile, "cert-file", cfg.CertFile, "Path to TLS certificate file")
 	rootCmd.PersistentFlags().StringVar(&cfg.KeyFile, "key-file", cfg.KeyFile, "Path to TLS private key file")
+	rootCmd.PersistentFlags().StringVar(&cfg.CertPath, "cert-path", cfg.CertPath, "Path to store generated certificates")
 	rootCmd.PersistentFlags().StringVar(&cfg.DBPath, "db-path", cfg.DBPath, "Path to GeoIP database directory")
-	rootCmd.PersistentFlags().StringVar(&cfg.MaxMindLicense, "maxmind-license", cfg.MaxMindLicense, "MaxMind license key")
+	// Create masked description for MaxMind license
+	maskedLicense := maskLicenseKey(cfg.MaxMindLicense)
+	var licenseDesc string
+	if maskedLicense == "" {
+		licenseDesc = "MaxMind license key"
+	} else {
+		licenseDesc = fmt.Sprintf("MaxMind license key (default \"%s\")", maskedLicense)
+	}
+
+	// Create a temporary variable for the flag
+	var maxmindLicenseFlag string
+	rootCmd.PersistentFlags().StringVar(&maxmindLicenseFlag, "maxmind-license", "", licenseDesc)
+
+	// Use a PreRun hook to set the actual value if flag wasn't provided
+	originalPreRun := rootCmd.PersistentPreRun
+	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		if maxmindLicenseFlag != "" {
+			cfg.MaxMindLicense = maxmindLicenseFlag
+		}
+		if originalPreRun != nil {
+			originalPreRun(cmd, args)
+		}
+	}
 	rootCmd.PersistentFlags().BoolVar(&cfg.AutoUpdate, "auto-update", cfg.AutoUpdate, "Enable automatic database updates")
 	rootCmd.PersistentFlags().StringVar(&cfg.UpdateInterval, "update-interval", cfg.UpdateInterval, "Database update interval (cron format)")
 	rootCmd.PersistentFlags().StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "Log level (debug, info, warn, error)")
@@ -117,10 +151,10 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 		// Use default paths if not specified
 		if certPath == "" {
-			certPath = filepath.Join(cfg.DBPath, "server.crt")
+			certPath = filepath.Join(cfg.CertPath, "server.crt")
 		}
 		if keyPath == "" {
-			keyPath = filepath.Join(cfg.DBPath, "server.key")
+			keyPath = filepath.Join(cfg.CertPath, "server.key")
 		}
 
 		certManager := tlsmanager.NewCertManager(certPath, keyPath, logger)
@@ -412,10 +446,10 @@ var certGenerateCmd = &cobra.Command{
 		keyPath := cfg.KeyFile
 
 		if certPath == "" {
-			certPath = filepath.Join(cfg.DBPath, "server.crt")
+			certPath = filepath.Join(cfg.CertPath, "server.crt")
 		}
 		if keyPath == "" {
-			keyPath = filepath.Join(cfg.DBPath, "server.key")
+			keyPath = filepath.Join(cfg.CertPath, "server.key")
 		}
 
 		certManager := tlsmanager.NewCertManager(certPath, keyPath, logger)
@@ -432,10 +466,10 @@ var certInfoCmd = &cobra.Command{
 		keyPath := cfg.KeyFile
 
 		if certPath == "" {
-			certPath = filepath.Join(cfg.DBPath, "server.crt")
+			certPath = filepath.Join(cfg.CertPath, "server.crt")
 		}
 		if keyPath == "" {
-			keyPath = filepath.Join(cfg.DBPath, "server.key")
+			keyPath = filepath.Join(cfg.CertPath, "server.key")
 		}
 
 		certManager := tlsmanager.NewCertManager(certPath, keyPath, logger)
@@ -445,6 +479,8 @@ var certInfoCmd = &cobra.Command{
 		}
 
 		fmt.Printf("Certificate Information:\n")
+		fmt.Printf("  Certificate Path: %s\n", certPath)
+		fmt.Printf("  Private Key Path: %s\n", keyPath)
 		fmt.Printf("  Subject: %s\n", info["subject"])
 		fmt.Printf("  Issuer: %s\n", info["issuer"])
 		fmt.Printf("  Valid From: %s\n", info["not_before"])

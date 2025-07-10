@@ -160,6 +160,7 @@ curl http://localhost/health
 | `ENABLE_TLS` | `false` | Enable TLS/HTTPS |
 | `CERT_FILE` | `""` | Path to TLS certificate file |
 | `KEY_FILE` | `""` | Path to TLS private key file |
+| `CERT_PATH` | `./certs` | Directory to store generated certificates |
 | `GENERATE_CERTS` | `false` | Generate self-signed certificates |
 | `CERT_VALID_DAYS` | `3650` | Certificate validity period (days) |
 | `CERT_HOSTS` | `localhost,127.0.0.1` | Certificate hosts (comma-separated) |
@@ -180,6 +181,7 @@ curl http://localhost/health
 
 # TLS options
 ./geoip-server --generate-certs --cert-valid-days 365 --cert-hosts "example.com,localhost"
+./geoip-server --cert-path "/etc/ssl/certs" --cert-file "server.crt" --key-file "server.key"
 
 # Update databases manually
 ./geoip-server update
@@ -190,11 +192,11 @@ curl http://localhost/health
 # Rollback databases to previous backup
 ./geoip-server rollback
 
-# Generate certificates
-./geoip-server cert generate
-
-# View certificate info
-./geoip-server cert info
+# Certificate management
+./geoip-server cert generate --cert-path "/custom/path" --cert-hosts "example.com,192.168.1.1"
+./geoip-server cert generate --cert-file "/custom/cert.pem" --key-file "/custom/key.pem"
+./geoip-server cert info --cert-path "/custom/path"
+./geoip-server cert info --cert-file "/custom/cert.pem" --key-file "/custom/key.pem"
 
 # Show version
 ./geoip-server version
@@ -409,19 +411,67 @@ UPDATE_INTERVAL="0 4 1 * *"
 
 ### Self-Signed Certificates
 
+Generate certificates with automatic 400 permissions for security:
+
 ```bash
-# Generate self-signed certificate
+# Generate certificate with default settings (./certs directory)
 ./geoip-server cert generate --cert-hosts "example.com,localhost,127.0.0.1"
 
-# Enable HTTPS
+# Generate certificate to custom directory
+./geoip-server cert generate --cert-path "/etc/ssl/private" --cert-hosts "myserver.com,192.168.1.100"
+
+# Generate certificate with custom validity period
+./geoip-server cert generate --cert-valid-days 365 --cert-hosts "short-term.example.com"
+
+# Generate certificate with custom file names
+./geoip-server cert generate --cert-file "/custom/server.crt" --key-file "/custom/server.key"
+
+# Enable HTTPS with automatic certificate generation
 ./geoip-server --enable-tls --generate-certs
 ```
+
+### Certificate Information
+
+View detailed certificate information including file paths:
+
+```bash
+# View certificate info (default path)
+./geoip-server cert info
+
+# View certificate info from custom directory
+./geoip-server cert info --cert-path "/etc/ssl/private"
+
+# View certificate info for specific files
+./geoip-server cert info --cert-file "/custom/server.crt" --key-file "/custom/server.key"
+```
+
+**Example Output:**
+```
+Certificate Information:
+  Certificate Path: /etc/ssl/private/server.crt
+  Private Key Path: /etc/ssl/private/server.key
+  Subject: O=GeoIP Service,C=US
+  Issuer: O=GeoIP Service,C=US
+  Valid From: 2024-01-15 10:30:45 +0000 UTC
+  Valid Until: 2034-01-13 10:30:45 +0000 UTC
+  DNS Names: [example.com localhost]
+  IP Addresses: [127.0.0.1 192.168.1.100]
+```
+
+### Security Features
+
+- **Secure Permissions**: Generated certificates automatically have 400 permissions (read-only owner)
+- **Safe Regeneration**: Existing certificates with 400 permissions can be safely regenerated
+- **MaxMind License Masking**: License keys are masked in help output (shows only first 10 + last 3 characters)
 
 ### Custom Certificates
 
 ```bash
 # Use custom certificates
 ./geoip-server --enable-tls --cert-file /path/to/cert.pem --key-file /path/to/key.pem
+
+# Use custom certificate directory
+./geoip-server --enable-tls --cert-path "/etc/ssl/certs"
 ```
 
 ### Let's Encrypt with Docker

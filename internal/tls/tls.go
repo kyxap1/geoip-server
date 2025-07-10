@@ -89,6 +89,15 @@ func (cm *CertManager) GenerateSelfSignedCert(hosts string, validDays int) error
 		return fmt.Errorf("failed to create cert directory: %w", err)
 	}
 
+	// Remove existing certificate file if it exists (it might have 400 permissions)
+	if _, err := os.Stat(cm.certPath); err == nil {
+		// Change permissions to allow deletion
+		os.Chmod(cm.certPath, 0600)
+		if err := os.Remove(cm.certPath); err != nil {
+			return fmt.Errorf("failed to remove existing cert file: %w", err)
+		}
+	}
+
 	// Write certificate to file
 	certFile, err := os.Create(cm.certPath)
 	if err != nil {
@@ -103,6 +112,15 @@ func (cm *CertManager) GenerateSelfSignedCert(hosts string, validDays int) error
 	// Set certificate file permissions to 400
 	if err := os.Chmod(cm.certPath, 0400); err != nil {
 		return fmt.Errorf("failed to set certificate file permissions: %w", err)
+	}
+
+	// Remove existing key file if it exists (it might have 400 permissions)
+	if _, err := os.Stat(cm.keyPath); err == nil {
+		// Change permissions to allow deletion
+		os.Chmod(cm.keyPath, 0600)
+		if err := os.Remove(cm.keyPath); err != nil {
+			return fmt.Errorf("failed to remove existing key file: %w", err)
+		}
 	}
 
 	// Write private key to file

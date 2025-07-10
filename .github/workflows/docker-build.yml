@@ -2,18 +2,102 @@ name: Build and Push Docker Image
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ master ]
     tags: [ 'v*' ]
   pull_request:
-    branches: [ main ]
+    branches: [ master ]
+  workflow_dispatch:
+    inputs:
+      skip_tests:
+        description: 'Skip tests (not recommended)'
+        required: false
+        default: false
+        type: boolean
+      force_push:
+        description: 'Force push even on PR'
+        required: false
+        default: false
+        type: boolean
 
 env:
-  REGISTRY: docker.io
+  GITHUB_REGISTRY: ghcr.io
+  DOCKER_REGISTRY: docker.io
   IMAGE_NAME: geoip-server
 
 jobs:
-  build:
+  lint:
+    name: Lint Code
     runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.23'
+
+    - name: Run golangci-lint
+      uses: golangci/golangci-lint-action@v3
+      with:
+        version: latest
+        args: --timeout=5m
+
+  test:
+    name: Run Tests
+    needs: [lint]
+    runs-on: ubuntu-latest
+    if: always() && !cancelled() && success() && !inputs.skip_tests
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.23'
+
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Verify dependencies
+      run: go mod verify
+
+    - name: Run vet
+      run: go vet ./...
+
+    - name: Run tests
+      run: go test -v -race -coverprofile=coverage.out ./...
+
+    - name: Generate coverage report
+      run: go tool cover -html=coverage.out -o coverage.html
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-results
+        path: |
+          coverage.out
+          coverage.html
+
+  build:
+    name: Build Docker Image
+    needs: [test]
+    runs-on: ubuntu-latest
+    if: always() && !cancelled() && (success() || inputs.skip_tests)
     permissions:
       contents: read
       packages: write
@@ -25,64 +109,219 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
-    - name: Log in to Docker Hub
-      if: github.event_name != 'pull_request'
-      uses: docker/login-action@v3
-      with:
-        registry: ${{ env.REGISTRY }}
-        username: ${{ secrets.DOCKER_USERNAME }}
-        password: ${{ secrets.DOCKER_PASSWORD }}
+    - name: Generate unique version
+      id: version
+      run: |
+        # Generate version using git describe + build number
+        BUILD_NUMBER=${GITHUB_RUN_NUMBER}
+
+        # Try git describe with tags
+        if git describe --tags --always --dirty 2>/dev/null; then
+          GIT_DESCRIBE=$(git describe --tags --always --dirty)
+        else
+          # No tags, use commit count + SHA
+          COMMIT_COUNT=$(git rev-list --count HEAD)
+          SHORT_SHA=${GITHUB_SHA::7}
+          GIT_DESCRIBE="0.0.0-${COMMIT_COUNT}-g${SHORT_SHA}"
+        fi
+
+        # Add build number for immutability
+        UNIQUE_VERSION="${GIT_DESCRIBE}-build${BUILD_NUMBER}"
+
+        echo "unique_version=${UNIQUE_VERSION}" >> $GITHUB_OUTPUT
+        echo "git_describe=${GIT_DESCRIBE}" >> $GITHUB_OUTPUT
+        echo "build_number=${BUILD_NUMBER}" >> $GITHUB_OUTPUT
+        echo "short_sha=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
 
     - name: Extract metadata
       id: meta
       uses: docker/metadata-action@v5
       with:
-        images: ${{ env.REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}
+        images: |
+          ${{ env.GITHUB_REGISTRY }}/${{ github.repository }}
+          ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}
         tags: |
-          type=ref,event=branch
-          type=ref,event=pr
+          type=raw,value=${{ steps.version.outputs.unique_version }}
+          type=raw,value=${{ steps.version.outputs.git_describe }}
+          type=raw,value=${{ steps.version.outputs.short_sha }}
+          type=raw,value=build${{ steps.version.outputs.build_number }}
+          type=ref,event=branch,suffix=-build${{ steps.version.outputs.build_number }}
+          type=ref,event=pr,suffix=-build${{ steps.version.outputs.build_number }}
           type=semver,pattern={{version}}
           type=semver,pattern={{major}}.{{minor}}
           type=semver,pattern={{major}}
-          type=raw,value=latest,enable={{is_default_branch}}
 
-    - name: Build and push Docker image
+    - name: Build Docker image
       uses: docker/build-push-action@v5
       with:
         context: .
         platforms: linux/amd64,linux/arm64
-        push: ${{ github.event_name != 'pull_request' }}
+        push: false
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
+        outputs: type=docker,dest=/tmp/image.tar
 
-    - name: Update Docker Hub description
-      if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-      uses: peter-evans/dockerhub-description@v3
+    - name: Upload image artifact
+      uses: actions/upload-artifact@v3
       with:
-        username: ${{ secrets.DOCKER_USERNAME }}
-        password: ${{ secrets.DOCKER_PASSWORD }}
-        repository: ${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}
-        readme-filepath: ./README.md
+        name: docker-image
+        path: /tmp/image.tar
+
+    - name: Save version info
+      run: |
+        echo "${{ steps.version.outputs.unique_version }}" > /tmp/version.txt
+        echo "${{ steps.version.outputs.git_describe }}" > /tmp/git_describe.txt
+        echo "${{ steps.version.outputs.build_number }}" > /tmp/build_number.txt
+        echo "${{ steps.version.outputs.short_sha }}" > /tmp/short_sha.txt
+
+    - name: Upload version info
+      uses: actions/upload-artifact@v3
+      with:
+        name: version-info
+        path: |
+          /tmp/version.txt
+          /tmp/git_describe.txt
+          /tmp/build_number.txt
+          /tmp/short_sha.txt
+
+
 
   security-scan:
+    name: Security Scan
     runs-on: ubuntu-latest
-    needs: build
-    if: github.event_name != 'pull_request'
+    needs: [build]
+    if: always() && !cancelled() && success() && (github.event_name != 'pull_request' || inputs.force_push)
+    permissions:
+      contents: read
+      security-events: write
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
+    - name: Download image artifact
+      uses: actions/download-artifact@v3
+      with:
+        name: docker-image
+        path: /tmp
+
+    - name: Load Docker image
+      run: docker load --input /tmp/image.tar
+
+    - name: Get image tag for scanning
+      id: image_tag
+      run: |
+        # Get the first available image tag
+        IMAGE_TAG=$(docker images --format "table {{.Repository}}:{{.Tag}}" | grep -v "REPOSITORY" | head -1)
+        echo "tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+
     - name: Run Trivy vulnerability scanner
       uses: aquasecurity/trivy-action@master
       with:
-        image-ref: ${{ env.REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+        image-ref: ${{ steps.image_tag.outputs.tag }}
         format: 'sarif'
         output: 'trivy-results.sarif'
 
     - name: Upload Trivy scan results to GitHub Security
       uses: github/codeql-action/upload-sarif@v2
+      if: always()
       with:
         sarif_file: 'trivy-results.sarif'
+
+  push:
+    name: Push Docker Image
+    needs: [security-scan]
+    runs-on: ubuntu-latest
+    if: always() && !cancelled() && success() && (github.event_name != 'pull_request' || inputs.force_push)
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Download image artifact
+      uses: actions/download-artifact@v3
+      with:
+        name: docker-image
+        path: /tmp
+
+    - name: Download version info
+      uses: actions/download-artifact@v3
+      with:
+        name: version-info
+        path: /tmp
+
+    - name: Load Docker image
+      run: docker load --input /tmp/image.tar
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.GITHUB_REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.DOCKER_REGISTRY }}
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_TOKEN }}
+
+    - name: Load version info
+      id: version
+      run: |
+        # Load version info from build job
+        UNIQUE_VERSION=$(cat /tmp/version.txt)
+        GIT_DESCRIBE=$(cat /tmp/git_describe.txt)
+        BUILD_NUMBER=$(cat /tmp/build_number.txt)
+        SHORT_SHA=$(cat /tmp/short_sha.txt)
+        echo "unique_version=${UNIQUE_VERSION}" >> $GITHUB_OUTPUT
+        echo "git_describe=${GIT_DESCRIBE}" >> $GITHUB_OUTPUT
+        echo "build_number=${BUILD_NUMBER}" >> $GITHUB_OUTPUT
+        echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: |
+          ${{ env.GITHUB_REGISTRY }}/${{ github.repository }}
+          ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=raw,value=${{ steps.version.outputs.unique_version }}
+          type=raw,value=${{ steps.version.outputs.git_describe }}
+          type=raw,value=${{ steps.version.outputs.short_sha }}
+          type=raw,value=build${{ steps.version.outputs.build_number }}
+          type=ref,event=branch,suffix=-build${{ steps.version.outputs.build_number }}
+          type=ref,event=pr,suffix=-build${{ steps.version.outputs.build_number }}
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=semver,pattern={{major}}
+
+    - name: Push Docker image
+      run: |
+        # Get the first tag from the metadata (unique version)
+        FIRST_TAG=$(echo '${{ steps.meta.outputs.tags }}' | tr ',' '\n' | head -1)
+
+        # Tag and push all images
+        for tag in $(echo '${{ steps.meta.outputs.tags }}' | tr ',' '\n'); do
+          docker tag $FIRST_TAG $tag
+          docker push $tag
+        done
+
+    - name: Update Docker Hub description
+      if: github.ref == 'refs/heads/master'
+      uses: peter-evans/dockerhub-description@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_TOKEN }}
+        repository: ${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}
+        readme-filepath: ./README.md

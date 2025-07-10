@@ -3,4 +3,5 @@
 **.mmdb
 **.checksum
 geoip-server
+certs/
 data/

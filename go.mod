@@ -1,4 +1,4 @@
-module geoip-server
+module github.com/kyxap1/geoip-server
 
 go 1.24
 

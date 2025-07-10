@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"geoip-server/internal/types"
+	"github.com/kyxap1/geoip-server/internal/types"
 
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"

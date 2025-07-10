@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"geoip-server/internal/cache"
-	"geoip-server/internal/types"
+	"github.com/kyxap1/geoip-server/internal/cache"
+	"github.com/kyxap1/geoip-server/internal/types"
 
 	geoip2 "github.com/oschwald/geoip2-golang"
 	"github.com/sirupsen/logrus"

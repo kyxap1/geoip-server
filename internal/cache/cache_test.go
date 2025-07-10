@@ -2,10 +2,11 @@ package cache
 
 import (
 	"fmt"
-	"geoip-server/internal/types"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/kyxap1/geoip-server/internal/types"
 
 	"github.com/sirupsen/logrus"
 )

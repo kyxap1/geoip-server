@@ -16,10 +16,10 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
-	"geoip-server/internal/config"
-	"geoip-server/internal/geoip"
-	"geoip-server/internal/handlers"
-	tlsmanager "geoip-server/internal/tls"
+	"github.com/kyxap1/geoip-server/internal/config"
+	"github.com/kyxap1/geoip-server/internal/geoip"
+	"github.com/kyxap1/geoip-server/internal/handlers"
+	tlsmanager "github.com/kyxap1/geoip-server/internal/tls"
 )
 
 var (

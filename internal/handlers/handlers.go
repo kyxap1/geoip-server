@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"geoip-server/internal/geoip"
-	"geoip-server/internal/types"
+	"github.com/kyxap1/geoip-server/internal/geoip"
+	"github.com/kyxap1/geoip-server/internal/types"
 
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"

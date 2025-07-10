@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"geoip-server/internal/config"
-	"geoip-server/internal/geoip"
-	"geoip-server/internal/handlers"
-	"geoip-server/internal/types"
+	"github.com/kyxap1/geoip-server/internal/config"
+	"github.com/kyxap1/geoip-server/internal/geoip"
+	"github.com/kyxap1/geoip-server/internal/handlers"
+	"github.com/kyxap1/geoip-server/internal/types"
 
 	"github.com/sirupsen/logrus"
 )

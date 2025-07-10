@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"geoip-server/internal/types"
+	"github.com/kyxap1/geoip-server/internal/types"
 
 	"github.com/sirupsen/logrus"
 )

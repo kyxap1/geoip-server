@@ -1,6 +1,6 @@
 package geoip
 
-import "geoip-server/internal/types"
+import "github.com/kyxap1/geoip-server/internal/types"
 
 // DatabaseManagerInterface defines the interface for GeoIP database operations
 type DatabaseManagerInterface interface {

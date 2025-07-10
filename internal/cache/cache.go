@@ -2,6 +2,7 @@ package cache
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang-geoip/internal/types"
@@ -64,18 +65,18 @@ func (c *IPCache) Get(ip string) (*types.GeoIPInfo, bool) {
 
 	entry, exists := c.cache[ip]
 	if !exists {
-		c.misses++
+		atomic.AddInt64(&c.misses, 1)
 		return nil, false
 	}
 
 	// Check if entry has expired
 	if time.Now().After(entry.ExpiresAt) {
-		c.misses++
+		atomic.AddInt64(&c.misses, 1)
 		// Don't delete here, let cleanup handle it
 		return nil, false
 	}
 
-	c.hits++
+	atomic.AddInt64(&c.hits, 1)
 	return entry.Data, true
 }
 
@@ -133,7 +134,7 @@ func (c *IPCache) evictOldest() {
 	// Remove oldest entries
 	for i := 0; i < evictCount && i < len(entries); i++ {
 		delete(c.cache, entries[i].key)
-		c.evictions++
+		atomic.AddInt64(&c.evictions, 1)
 	}
 }
 
@@ -180,17 +181,21 @@ func (c *IPCache) GetStats() map[string]interface{} {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	total := c.hits + c.misses
+	hits := atomic.LoadInt64(&c.hits)
+	misses := atomic.LoadInt64(&c.misses)
+	evictions := atomic.LoadInt64(&c.evictions)
+
+	total := hits + misses
 	var hitRate float64
 	if total > 0 {
-		hitRate = float64(c.hits) / float64(total) * 100
+		hitRate = float64(hits) / float64(total) * 100
 	}
 
 	return map[string]interface{}{
 		"entries":     len(c.cache),
-		"hits":        c.hits,
-		"misses":      c.misses,
-		"evictions":   c.evictions,
+		"hits":        hits,
+		"misses":      misses,
+		"evictions":   evictions,
 		"hit_rate":    hitRate,
 		"ttl_seconds": c.ttl.Seconds(),
 		"max_entries": c.maxEntries,
@@ -203,9 +208,9 @@ func (c *IPCache) Clear() {
 	defer c.mu.Unlock()
 
 	c.cache = make(map[string]*CacheEntry)
-	c.hits = 0
-	c.misses = 0
-	c.evictions = 0
+	atomic.StoreInt64(&c.hits, 0)
+	atomic.StoreInt64(&c.misses, 0)
+	atomic.StoreInt64(&c.evictions, 0)
 
 	c.logger.Info("Cache cleared")
 }

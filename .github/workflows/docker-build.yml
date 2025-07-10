@@ -2,10 +2,11 @@ name: Build and Push Docker Image
 
 on:
   push:
-    branches: [ master ]
+    # TODO delete chore/linter
+    branches: [ master, chore/linter ]
     tags: [ 'v*' ]
   pull_request:
-    branches: [ master ]
+    branches: [ master, chore/linter ]
   workflow_dispatch:
     inputs:
       skip_tests:

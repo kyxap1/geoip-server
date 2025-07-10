@@ -22,14 +22,15 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o geoip-server .
 
 
 ########## Stage 2: Create minimal runtime image ##########
-FROM alpine:3
+FROM amazonlinux:2023
 
 # Install runtime dependencies
-RUN apk --no-cache add ca-certificates tzdata wget bash
+RUN dnf install -y ca-certificates tzdata wget bash shadow-utils && \
+    dnf clean all
 
 # Create non-root user
-RUN addgroup -g 1000 geoip && \
-    adduser -D -s /bin/sh -u 1000 -G geoip geoip
+RUN groupadd -g 1000 geoip && \
+    useradd -r -d /app -s /bin/bash -u 1000 -g geoip geoip
 
 # Set working directory
 WORKDIR /app
@@ -62,7 +63,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
 ARG DATE
 ARG UPGRADE=true
 RUN if [[ ${UPGRADE} == true ]]; then \
-  echo $DATE >/dev/null && apk upgrade --no-cache --available; \
+  echo $DATE >/dev/null && dnf update -y --releasever=latest; \
 fi
 
 # Switch to non-root user

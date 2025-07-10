@@ -400,7 +400,11 @@ func TestCLI_ErrorHandling(t *testing.T) {
 		if err := os.Chmod(readOnlyDir, 0444); err != nil {
 			t.Fatalf("Failed to make directory read-only: %v", err)
 		}
-		defer os.Chmod(readOnlyDir, 0755) // Restore permissions for cleanup
+		defer func() {
+			if err := os.Chmod(readOnlyDir, 0755); err != nil {
+				t.Logf("Failed to restore permissions for cleanup: %v", err)
+			}
+		}() // Restore permissions for cleanup
 
 		certPath := filepath.Join(readOnlyDir, "certs")
 

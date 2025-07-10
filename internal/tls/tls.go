@@ -92,7 +92,9 @@ func (cm *CertManager) GenerateSelfSignedCert(hosts string, validDays int) error
 	// Remove existing certificate file if it exists (it might have 400 permissions)
 	if _, err := os.Stat(cm.certPath); err == nil {
 		// Change permissions to allow deletion
-		os.Chmod(cm.certPath, 0600)
+		if err := os.Chmod(cm.certPath, 0600); err != nil {
+			cm.logger.Warnf("Failed to change certificate file permissions: %v", err)
+		}
 		if err := os.Remove(cm.certPath); err != nil {
 			return fmt.Errorf("failed to remove existing cert file: %w", err)
 		}
@@ -103,7 +105,11 @@ func (cm *CertManager) GenerateSelfSignedCert(hosts string, validDays int) error
 	if err != nil {
 		return fmt.Errorf("failed to create cert file: %w", err)
 	}
-	defer certFile.Close()
+	defer func() {
+		if err := certFile.Close(); err != nil {
+			cm.logger.Warnf("Failed to close certificate file: %v", err)
+		}
+	}()
 
 	if err := pem.Encode(certFile, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
 		return fmt.Errorf("failed to write certificate: %w", err)
@@ -117,7 +123,9 @@ func (cm *CertManager) GenerateSelfSignedCert(hosts string, validDays int) error
 	// Remove existing key file if it exists (it might have 400 permissions)
 	if _, err := os.Stat(cm.keyPath); err == nil {
 		// Change permissions to allow deletion
-		os.Chmod(cm.keyPath, 0600)
+		if err := os.Chmod(cm.keyPath, 0600); err != nil {
+			cm.logger.Warnf("Failed to change key file permissions: %v", err)
+		}
 		if err := os.Remove(cm.keyPath); err != nil {
 			return fmt.Errorf("failed to remove existing key file: %w", err)
 		}
@@ -128,7 +136,11 @@ func (cm *CertManager) GenerateSelfSignedCert(hosts string, validDays int) error
 	if err != nil {
 		return fmt.Errorf("failed to create key file: %w", err)
 	}
-	defer keyFile.Close()
+	defer func() {
+		if err := keyFile.Close(); err != nil {
+			cm.logger.Warnf("Failed to close key file: %v", err)
+		}
+	}()
 
 	privateKeyDER, err := x509.MarshalPKCS8PrivateKey(privateKey)
 	if err != nil {

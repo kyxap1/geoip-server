@@ -138,7 +138,8 @@ func TestJSONHandler(t *testing.T) {
 				t.Errorf("handler returned wrong status code: got %v want %v", status, tt.expectedStatus)
 			}
 
-			if tt.expectedStatus == 200 {
+			switch tt.expectedStatus {
+			case 200:
 				// Check content type
 				contentType := rr.Header().Get("Content-Type")
 				if contentType != "application/json" {
@@ -163,7 +164,7 @@ func TestJSONHandler(t *testing.T) {
 				if response.CountryCode == "" {
 					t.Error("CountryCode field is empty")
 				}
-			} else if tt.expectedStatus == 400 {
+			case 400:
 				// Check that error response is JSON
 				contentType := rr.Header().Get("Content-Type")
 				if contentType != "application/json" {
@@ -373,7 +374,8 @@ func TestHealthHandler(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	handler.middleware(handler.HealthHandler)(rr, req)
+	middlewareHandler := handler.middleware(handler.HealthHandler)
+	middlewareHandler(rr, req)
 
 	if status := rr.Code; status != http.StatusOK {
 		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
@@ -396,9 +398,9 @@ func TestHealthHandler(t *testing.T) {
 		t.Errorf("Expected status 'healthy', got '%s'", response["status"])
 	}
 
-	// Check if time field exists
-	if response["time"] == "" {
-		t.Error("Time field should not be empty")
+	// Check if timestamp field exists
+	if response["timestamp"] == "" {
+		t.Error("Timestamp field should not be empty")
 	}
 }
 
@@ -415,7 +417,8 @@ func TestStatsHandler(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	handler.middleware(handler.StatsHandler)(rr, req)
+	middlewareHandler := handler.middleware(handler.StatsHandler)
+	middlewareHandler(rr, req)
 
 	if status := rr.Code; status != http.StatusOK {
 		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
@@ -511,7 +514,9 @@ func TestMiddleware(t *testing.T) {
 
 	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("test"))
+		if _, err := w.Write([]byte("test")); err != nil {
+			t.Errorf("Failed to write response: %v", err)
+		}
 	})
 
 	req, err := http.NewRequest("GET", "/test", nil)
@@ -520,7 +525,8 @@ func TestMiddleware(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	handler.middleware(testHandler)(rr, req)
+	middlewareHandler := handler.middleware(testHandler)
+	middlewareHandler(rr, req)
 
 	// Check security headers
 	headers := map[string]string{
@@ -543,7 +549,7 @@ func TestMiddleware(t *testing.T) {
 	}
 
 	optionsRR := httptest.NewRecorder()
-	handler.middleware(testHandler)(optionsRR, optionsReq)
+	middlewareHandler(optionsRR, optionsReq)
 
 	if status := optionsRR.Code; status != http.StatusOK {
 		t.Errorf("OPTIONS request should return 200, got %v", status)
@@ -557,11 +563,16 @@ func BenchmarkJSONHandler(b *testing.B) {
 	mockDB := &MockDatabaseManager{logger: logger}
 	handler := NewAPIHandler(mockDB, logger)
 
-	req, _ := http.NewRequest("GET", "/json/8.8.8.8", nil)
+	req, err := http.NewRequest("GET", "/json/8.8.8.8", nil)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	middlewareHandler := handler.middleware(handler.JSONHandler)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rr := httptest.NewRecorder()
-		handler.middleware(handler.JSONHandler)(rr, req)
+		middlewareHandler(rr, req)
 	}
 }

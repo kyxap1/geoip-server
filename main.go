@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/robfig/cron/v3"
+	cron "github.com/robfig/cron/v3"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
@@ -134,7 +134,11 @@ func runServer(cmd *cobra.Command, args []string) error {
 	if err := dbManager.Initialize(); err != nil {
 		logger.Fatalf("Failed to initialize database manager: %v", err)
 	}
-	defer dbManager.Close()
+	defer func() {
+		if err := dbManager.Close(); err != nil {
+			logger.Errorf("Failed to close database manager: %v", err)
+		}
+	}()
 
 	// Log cache configuration
 	if cfg.CacheEnabled {
@@ -282,7 +286,9 @@ func gracefulShutdown(server, httpsServer *http.Server, cronScheduler *cron.Cron
 	// Shutdown HTTP server
 	if err := server.Shutdown(ctx); err != nil {
 		logger.Errorf("HTTP server shutdown error: %v", err)
-		server.Close() // Force close if graceful shutdown fails
+		if err := server.Close(); err != nil {
+			logger.Errorf("Failed to force close HTTP server: %v", err)
+		}
 	} else {
 		logger.Info("HTTP server shut down gracefully")
 	}
@@ -291,7 +297,9 @@ func gracefulShutdown(server, httpsServer *http.Server, cronScheduler *cron.Cron
 	if httpsServer != nil {
 		if err := httpsServer.Shutdown(ctx); err != nil {
 			logger.Errorf("HTTPS server shutdown error: %v", err)
-			httpsServer.Close() // Force close if graceful shutdown fails
+			if err := httpsServer.Close(); err != nil {
+				logger.Errorf("Failed to force close HTTPS server: %v", err)
+			}
 		} else {
 			logger.Info("HTTPS server shut down gracefully")
 		}

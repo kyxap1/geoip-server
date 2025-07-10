@@ -372,12 +372,20 @@ func (h *APIHandler) StatsHandler(w http.ResponseWriter, r *http.Request) {
 func (h *APIHandler) SetupRoutes() *mux.Router {
 	router := mux.NewRouter()
 
+	// Health check and stats (must be before catch-all routes)
+	router.HandleFunc("/health", h.middleware(h.HealthHandler)).Methods("GET")
+	router.HandleFunc("/stats", h.middleware(h.StatsHandler)).Methods("GET")
+
+	// Favicon handler (return 204 No Content for favicon requests)
+	router.HandleFunc("/favicon.ico", h.middleware(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})).Methods("GET")
+
 	// JSON endpoints (both with and without trailing slash)
 	router.HandleFunc("/", h.middleware(h.JSONHandler)).Methods("GET")
 	router.HandleFunc("/json", h.middleware(h.JSONHandler)).Methods("GET")
 	router.HandleFunc("/json/", h.middleware(h.JSONHandler)).Methods("GET")
 	router.HandleFunc("/json/{ip}", h.middleware(h.JSONHandler)).Methods("GET")
-	router.HandleFunc("/{ip}", h.middleware(h.JSONHandler)).Methods("GET")
 
 	// XML endpoints (both with and without trailing slash)
 	router.HandleFunc("/xml", h.middleware(h.XMLHandler)).Methods("GET")
@@ -389,14 +397,13 @@ func (h *APIHandler) SetupRoutes() *mux.Router {
 	router.HandleFunc("/csv/", h.middleware(h.CSVHandler)).Methods("GET")
 	router.HandleFunc("/csv/{ip}", h.middleware(h.CSVHandler)).Methods("GET")
 
-	// Health check and stats
-	router.HandleFunc("/health", h.middleware(h.HealthHandler)).Methods("GET")
-	router.HandleFunc("/stats", h.middleware(h.StatsHandler)).Methods("GET")
-
 	// OPTIONS method for CORS
 	router.HandleFunc("/{path:.*}", h.middleware(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})).Methods("OPTIONS")
+
+	// Catch-all IP route (must be last)
+	router.HandleFunc("/{ip}", h.middleware(h.JSONHandler)).Methods("GET")
 
 	return router
 }

@@ -102,6 +102,7 @@ jobs:
         echo "git_describe=${GIT_DESCRIBE}" >> $GITHUB_OUTPUT
         echo "build_number=${BUILD_NUMBER}" >> $GITHUB_OUTPUT
         echo "short_sha=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+        echo "date_epoch=$(date +%s)" >> $GITHUB_OUTPUT
     - name: Extract metadata
       id: meta
       uses: docker/metadata-action@v5
@@ -124,9 +125,8 @@ jobs:
       with:
         context: .
         push: false
-        build-args:
-          # we're using variable DATE as docker build cache breaker
-          DATE: "${{ steps.version.outputs.unique_version }}"
+        build-args: |
+          DATE=${{ steps.version.outputs.date_epoch }}
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
         cache-from: type=gha

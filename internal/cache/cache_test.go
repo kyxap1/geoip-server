@@ -600,3 +600,65 @@ func TestCache_CleanupEdgeCases(t *testing.T) {
 		}
 	})
 }
+
+// Direct test for cleanupExpired function
+func TestCache_CleanupExpiredDirect(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.ErrorLevel)
+
+	// Create cache without cleanup goroutine for controlled testing
+	cache := NewIPCacheNoCleanup(50*time.Millisecond, 10, logger)
+
+	// Add test entries
+	testData1 := &types.GeoIPInfo{IP: "1.1.1.1", Country: "Country1"}
+	testData2 := &types.GeoIPInfo{IP: "2.2.2.2", Country: "Country2"}
+	testData3 := &types.GeoIPInfo{IP: "3.3.3.3", Country: "Country3"}
+
+	cache.Set("expired1", testData1)
+	cache.Set("expired2", testData2)
+
+	// Wait for first entries to expire
+	time.Sleep(100 * time.Millisecond)
+
+	// Add fresh entry after expiration
+	cache.Set("fresh", testData3)
+
+	// Verify we have 3 entries before cleanup
+	if cache.Size() != 3 {
+		t.Errorf("Expected 3 entries before cleanup, got %d", cache.Size())
+	}
+
+	// Call cleanupExpired directly
+	cache.cleanupExpired()
+
+	// Should have only 1 fresh entry after cleanup
+	if cache.Size() != 1 {
+		t.Errorf("Expected 1 entry after cleanup, got %d", cache.Size())
+	}
+
+	// Fresh entry should still be accessible
+	_, found := cache.Get("fresh")
+	if !found {
+		t.Error("Fresh entry should still be accessible after cleanup")
+	}
+
+	// Expired entries should be gone
+	_, found1 := cache.Get("expired1")
+	_, found2 := cache.Get("expired2")
+	if found1 || found2 {
+		t.Error("Expired entries should be removed by cleanup")
+	}
+
+	// Test cleanup with no expired entries
+	cache.cleanupExpired()
+	if cache.Size() != 1 {
+		t.Errorf("Expected 1 entry after cleanup with no expired entries, got %d", cache.Size())
+	}
+
+	// Test cleanup with empty cache
+	cache.Clear()
+	cache.cleanupExpired()
+	if cache.Size() != 0 {
+		t.Errorf("Expected 0 entries after cleanup of empty cache, got %d", cache.Size())
+	}
+}

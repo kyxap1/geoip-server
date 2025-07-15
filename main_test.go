@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/tls"
 	"io"
 	"net/http"
 	"os"
@@ -525,4 +526,298 @@ func containsString(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// Test setupTLS function
+func TestSetupTLS(t *testing.T) {
+	// Save original config
+	originalCfg := cfg
+	originalLogger := logger
+	defer func() {
+		cfg = originalCfg
+		logger = originalLogger
+	}()
+
+	// Create test logger
+	testLogger := logrus.New()
+	testLogger.SetOutput(io.Discard)
+	logger = testLogger
+
+	t.Run("TLS disabled", func(t *testing.T) {
+		cfg = &config.Config{
+			EnableTLS: false,
+		}
+
+		tlsConfig, err := setupTLS()
+		if err != nil {
+			t.Errorf("setupTLS should not return error when TLS disabled: %v", err)
+		}
+		if tlsConfig != nil {
+			t.Error("Expected nil TLS config when TLS disabled")
+		}
+	})
+
+	t.Run("TLS enabled with certificate generation", func(t *testing.T) {
+		tempDir := t.TempDir()
+
+		cfg = &config.Config{
+			EnableTLS:     true,
+			GenerateCerts: true,
+			CertPath:      tempDir,
+			CertFile:      "",
+			KeyFile:       "",
+			CertHosts:     "localhost,127.0.0.1",
+			CertValidDays: 365,
+		}
+
+		tlsConfig, err := setupTLS()
+		if err != nil {
+			t.Errorf("setupTLS failed: %v", err)
+		}
+		if tlsConfig == nil {
+			t.Error("Expected non-nil TLS config when TLS enabled")
+		}
+
+		// Verify certificates were generated
+		certPath := filepath.Join(tempDir, "server.crt")
+		keyPath := filepath.Join(tempDir, "server.key")
+
+		if _, err := os.Stat(certPath); os.IsNotExist(err) {
+			t.Error("Certificate file should have been generated")
+		}
+		if _, err := os.Stat(keyPath); os.IsNotExist(err) {
+			t.Error("Key file should have been generated")
+		}
+	})
+
+	t.Run("TLS enabled with custom certificate paths", func(t *testing.T) {
+		tempDir := t.TempDir()
+		certPath := filepath.Join(tempDir, "custom.crt")
+		keyPath := filepath.Join(tempDir, "custom.key")
+
+		cfg = &config.Config{
+			EnableTLS:     true,
+			GenerateCerts: true,
+			CertFile:      certPath,
+			KeyFile:       keyPath,
+			CertHosts:     "localhost",
+			CertValidDays: 30,
+		}
+
+		tlsConfig, err := setupTLS()
+		if err != nil {
+			t.Errorf("setupTLS failed with custom paths: %v", err)
+		}
+		if tlsConfig == nil {
+			t.Error("Expected non-nil TLS config")
+		}
+
+		// Verify custom certificates were generated
+		if _, err := os.Stat(certPath); os.IsNotExist(err) {
+			t.Error("Custom certificate file should have been generated")
+		}
+		if _, err := os.Stat(keyPath); os.IsNotExist(err) {
+			t.Error("Custom key file should have been generated")
+		}
+	})
+}
+
+// Test createServers function
+func TestCreateServers(t *testing.T) {
+	// Save original config and logger
+	originalCfg := cfg
+	originalLogger := logger
+	defer func() {
+		cfg = originalCfg
+		logger = originalLogger
+	}()
+
+	// Create test logger
+	testLogger := logrus.New()
+	testLogger.SetOutput(io.Discard)
+	logger = testLogger
+
+	// Create test database manager
+	tempDir := t.TempDir()
+	dbManager := geoip.NewDatabaseManager(tempDir, "test_license", testLogger, false, 0, 0)
+	defer func() {
+		if err := dbManager.Close(); err != nil {
+			t.Logf("Failed to close database manager: %v", err)
+		}
+	}()
+
+	t.Run("HTTP only server", func(t *testing.T) {
+		cfg = &config.Config{
+			Port:      8080,
+			EnableTLS: false,
+		}
+
+		httpServer, httpsServer := createServers(dbManager, nil)
+
+		if httpServer == nil {
+			t.Error("Expected non-nil HTTP server")
+			return
+		}
+		if httpsServer != nil {
+			t.Error("Expected nil HTTPS server when TLS disabled")
+		}
+		if httpServer.Addr != ":8080" {
+			t.Errorf("Expected HTTP server address :8080, got %s", httpServer.Addr)
+		}
+		if httpServer.Handler == nil {
+			t.Error("Expected non-nil handler")
+		}
+	})
+
+	t.Run("HTTP and HTTPS servers", func(t *testing.T) {
+		cfg = &config.Config{
+			Port:      8080,
+			HTTPSPort: 8443,
+			EnableTLS: true,
+		}
+
+		// Create a dummy TLS config
+		tlsConfig := &tls.Config{}
+
+		httpServer, httpsServer := createServers(dbManager, tlsConfig)
+
+		if httpServer == nil {
+			t.Error("Expected non-nil HTTP server")
+			return
+		}
+		if httpsServer == nil {
+			t.Error("Expected non-nil HTTPS server when TLS enabled")
+			return
+		}
+		if httpServer.Addr != ":8080" {
+			t.Errorf("Expected HTTP server address :8080, got %s", httpServer.Addr)
+		}
+		if httpsServer.Addr != ":8443" {
+			t.Errorf("Expected HTTPS server address :8443, got %s", httpsServer.Addr)
+		}
+		if httpsServer.TLSConfig != tlsConfig {
+			t.Error("Expected HTTPS server to use provided TLS config")
+		}
+	})
+}
+
+// Test setupScheduler function
+func TestSetupScheduler(t *testing.T) {
+	// Save original config and logger
+	originalCfg := cfg
+	originalLogger := logger
+	defer func() {
+		cfg = originalCfg
+		logger = originalLogger
+	}()
+
+	// Create test logger
+	testLogger := logrus.New()
+	testLogger.SetOutput(io.Discard)
+	logger = testLogger
+
+	// Create test database manager
+	tempDir := t.TempDir()
+	dbManager := geoip.NewDatabaseManager(tempDir, "test_license", testLogger, false, 0, 0)
+	defer func() {
+		if err := dbManager.Close(); err != nil {
+			t.Logf("Failed to close database manager: %v", err)
+		}
+	}()
+
+	t.Run("Auto update disabled", func(t *testing.T) {
+		cfg = &config.Config{
+			AutoUpdate: false,
+		}
+
+		scheduler := setupScheduler(dbManager)
+		if scheduler != nil {
+			t.Error("Expected nil scheduler when auto update disabled")
+		}
+	})
+
+	t.Run("Auto update enabled", func(t *testing.T) {
+		cfg = &config.Config{
+			AutoUpdate:     true,
+			UpdateInterval: "@daily",
+		}
+
+		scheduler := setupScheduler(dbManager)
+		if scheduler == nil {
+			t.Error("Expected non-nil scheduler when auto update enabled")
+		} else {
+			// Clean up the scheduler
+			scheduler.Stop()
+		}
+	})
+
+	t.Run("Invalid cron schedule", func(t *testing.T) {
+		cfg = &config.Config{
+			AutoUpdate:     true,
+			UpdateInterval: "invalid-schedule",
+		}
+
+		scheduler := setupScheduler(dbManager)
+		// Should return nil due to invalid schedule
+		if scheduler != nil {
+			scheduler.Stop()
+		}
+		// This test mainly ensures the function doesn't panic
+	})
+}
+
+// Test startServersAndWait function behavior (limited testing without actual server start)
+func TestStartServersAndWaitComponents(t *testing.T) {
+	// This test focuses on the setup components of startServersAndWait
+	// We can't easily test the full function since it starts actual servers
+
+	// Save original config and logger
+	originalCfg := cfg
+	originalLogger := logger
+	defer func() {
+		cfg = originalCfg
+		logger = originalLogger
+	}()
+
+	// Create test logger
+	testLogger := logrus.New()
+	testLogger.SetOutput(io.Discard)
+	logger = testLogger
+
+	t.Run("Server configuration validation", func(t *testing.T) {
+		cfg = &config.Config{
+			Port:      8080,
+			HTTPSPort: 8443,
+			EnableTLS: true,
+		}
+
+		// Create test database manager
+		tempDir := t.TempDir()
+		dbManager := geoip.NewDatabaseManager(tempDir, "test_license", testLogger, false, 0, 0)
+		defer func() {
+			if err := dbManager.Close(); err != nil {
+				t.Logf("Failed to close database manager: %v", err)
+			}
+		}()
+
+		// Create servers (without starting them)
+		httpServer, httpsServer := createServers(dbManager, &tls.Config{})
+
+		// Verify server configuration
+		if httpServer == nil {
+			t.Error("HTTP server should be created")
+		}
+		if httpsServer == nil {
+			t.Error("HTTPS server should be created when TLS enabled")
+		}
+
+		// Create scheduler
+		scheduler := setupScheduler(dbManager)
+		if cfg.AutoUpdate && scheduler == nil {
+			t.Error("Scheduler should be created when auto update enabled")
+		}
+		if scheduler != nil {
+			scheduler.Stop()
+		}
+	})
 }

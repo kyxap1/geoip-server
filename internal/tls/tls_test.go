@@ -582,3 +582,346 @@ func verifyRegeneratedContent(t *testing.T, cm *CertManager) {
 		t.Error("Regenerated certificate should contain 'regenerated.test' DNS name")
 	}
 }
+
+func TestCertManager_SpecialCases(t *testing.T) {
+	tempDir := t.TempDir()
+	certPath := filepath.Join(tempDir, "cert.pem")
+	keyPath := filepath.Join(tempDir, "key.pem")
+
+	logger := logrus.New()
+	logger.SetLevel(logrus.ErrorLevel)
+
+	cm := NewCertManager(certPath, keyPath, logger)
+
+	// Test ValidateCertificates when certificates don't exist
+	t.Run("ValidateCertificates_NoCerts", func(t *testing.T) {
+		err := cm.ValidateCertificates()
+		if err == nil {
+			t.Error("Expected error when certificates don't exist")
+		}
+	})
+
+	// Test GetCertificateInfo when certificates don't exist
+	t.Run("GetCertificateInfo_NoCerts", func(t *testing.T) {
+		_, err := cm.GetCertificateInfo()
+		if err == nil {
+			t.Error("Expected error when certificates don't exist")
+		}
+	})
+
+	// Test LoadTLSConfig when certificates don't exist
+	t.Run("LoadTLSConfig_NoCerts", func(t *testing.T) {
+		_, err := cm.LoadTLSConfig()
+		if err == nil {
+			t.Error("Expected error when certificates don't exist")
+		}
+	})
+}
+
+func TestCertManager_FilesystemErrors(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.ErrorLevel)
+
+	t.Run("InvalidPaths", func(t *testing.T) {
+		// Test with invalid certificate path
+		invalidCertPath := "/invalid/path/cert.pem"
+		validKeyPath := "/tmp/key.pem"
+		cm := NewCertManager(invalidCertPath, validKeyPath, logger)
+
+		err := cm.GenerateSelfSignedCert("localhost", 365)
+		if err == nil {
+			t.Error("Expected error with invalid certificate path")
+		}
+	})
+
+	t.Run("ReadOnlyDirectory", func(t *testing.T) {
+		// Create a temporary directory
+		tempDir := t.TempDir()
+
+		// Create paths in a subdirectory that we'll make read-only
+		readOnlyDir := filepath.Join(tempDir, "readonly")
+		err := os.MkdirAll(readOnlyDir, 0755)
+		if err != nil {
+			t.Fatalf("Failed to create readonly directory: %v", err)
+		}
+
+		certPath := filepath.Join(readOnlyDir, "cert.pem")
+		keyPath := filepath.Join(readOnlyDir, "key.pem")
+
+		// Make the directory read-only
+		err = os.Chmod(readOnlyDir, 0444)
+		if err != nil {
+			t.Fatalf("Failed to make directory read-only: %v", err)
+		}
+
+		// Restore permissions at the end for cleanup
+		defer func() {
+			if err := os.Chmod(readOnlyDir, 0755); err != nil {
+				t.Logf("Failed to restore directory permissions: %v", err)
+			}
+		}()
+
+		cm := NewCertManager(certPath, keyPath, logger)
+
+		err = cm.GenerateSelfSignedCert("localhost", 365)
+		if err == nil {
+			t.Error("Expected error when writing to read-only directory")
+		}
+	})
+}
+
+func TestCertManager_InvalidCertificateContent(t *testing.T) {
+	tempDir := t.TempDir()
+	certPath := filepath.Join(tempDir, "cert.pem")
+	keyPath := filepath.Join(tempDir, "key.pem")
+
+	logger := logrus.New()
+	logger.SetLevel(logrus.ErrorLevel)
+
+	cm := NewCertManager(certPath, keyPath, logger)
+
+	t.Run("InvalidPEMCertificate", func(t *testing.T) {
+		// Create an invalid PEM certificate file
+		err := os.WriteFile(certPath, []byte("invalid pem content"), 0644)
+		if err != nil {
+			t.Fatalf("Failed to write invalid cert file: %v", err)
+		}
+
+		// Create a valid key file to pass CertificatesExist check
+		err = os.WriteFile(keyPath, []byte("dummy key"), 0644)
+		if err != nil {
+			t.Fatalf("Failed to write dummy key file: %v", err)
+		}
+
+		err = cm.ValidateCertificates()
+		if err == nil {
+			t.Error("Expected error with invalid PEM certificate")
+		}
+
+		_, err = cm.GetCertificateInfo()
+		if err == nil {
+			t.Error("Expected error with invalid PEM certificate")
+		}
+	})
+
+	t.Run("ValidPEMInvalidCertificate", func(t *testing.T) {
+		// Create a valid PEM block with invalid certificate data
+		invalidCertPEM := `-----BEGIN CERTIFICATE-----
+aW52YWxpZCBjZXJ0aWZpY2F0ZSBkYXRh
+-----END CERTIFICATE-----`
+
+		err := os.WriteFile(certPath, []byte(invalidCertPEM), 0644)
+		if err != nil {
+			t.Fatalf("Failed to write invalid cert PEM: %v", err)
+		}
+
+		err = cm.ValidateCertificates()
+		if err == nil {
+			t.Error("Expected error with invalid certificate data")
+		}
+
+		_, err = cm.GetCertificateInfo()
+		if err == nil {
+			t.Error("Expected error with invalid certificate data")
+		}
+	})
+}
+
+func TestCertManager_RemoveExistingFile(t *testing.T) {
+	tempDir := t.TempDir()
+	logger := logrus.New()
+	logger.SetLevel(logrus.ErrorLevel)
+
+	testFilePath := filepath.Join(tempDir, "testfile.txt")
+	cm := NewCertManager("dummy", "dummy", logger)
+
+	t.Run("RemoveNonExistentFile", func(t *testing.T) {
+		// Test removing a file that doesn't exist (should not error)
+		err := cm.removeExistingFile(testFilePath)
+		if err != nil {
+			t.Errorf("removeExistingFile should not error on non-existent file: %v", err)
+		}
+	})
+
+	t.Run("RemoveExistingFile", func(t *testing.T) {
+		// Create a file
+		err := os.WriteFile(testFilePath, []byte("test content"), 0644)
+		if err != nil {
+			t.Fatalf("Failed to create test file: %v", err)
+		}
+
+		// Remove it
+		err = cm.removeExistingFile(testFilePath)
+		if err != nil {
+			t.Errorf("removeExistingFile failed: %v", err)
+		}
+
+		// Verify it's gone
+		if _, err := os.Stat(testFilePath); !os.IsNotExist(err) {
+			t.Error("File should have been removed")
+		}
+	})
+
+	t.Run("RemoveReadOnlyFile", func(t *testing.T) {
+		// Create a read-only file
+		err := os.WriteFile(testFilePath, []byte("read-only content"), 0400)
+		if err != nil {
+			t.Fatalf("Failed to create read-only file: %v", err)
+		}
+
+		// Remove it (should work because removeExistingFile changes permissions)
+		err = cm.removeExistingFile(testFilePath)
+		if err != nil {
+			t.Errorf("removeExistingFile should handle read-only files: %v", err)
+		}
+
+		// Verify it's gone
+		if _, err := os.Stat(testFilePath); !os.IsNotExist(err) {
+			t.Error("Read-only file should have been removed")
+		}
+	})
+}
+
+func TestCertManager_LoadTLSConfigValidCerts(t *testing.T) {
+	tempDir := t.TempDir()
+	certPath := filepath.Join(tempDir, "cert.pem")
+	keyPath := filepath.Join(tempDir, "key.pem")
+
+	logger := logrus.New()
+	logger.SetLevel(logrus.ErrorLevel)
+
+	cm := NewCertManager(certPath, keyPath, logger)
+
+	// Generate valid certificates
+	err := cm.GenerateSelfSignedCert("localhost", 365)
+	if err != nil {
+		t.Fatalf("Failed to generate certificates: %v", err)
+	}
+
+	// Test LoadTLSConfig with valid certificates
+	tlsConfig, err := cm.LoadTLSConfig()
+	if err != nil {
+		t.Fatalf("LoadTLSConfig failed with valid certs: %v", err)
+	}
+
+	if tlsConfig == nil {
+		t.Error("Expected non-nil TLS config")
+		return
+	}
+
+	// Verify TLS configuration security settings
+	if tlsConfig.MinVersion != tls.VersionTLS12 {
+		t.Errorf("Expected MinVersion TLS 1.2, got %x", tlsConfig.MinVersion)
+	}
+
+	if tlsConfig.MaxVersion != tls.VersionTLS13 {
+		t.Errorf("Expected MaxVersion TLS 1.3, got %x", tlsConfig.MaxVersion)
+	}
+
+	if len(tlsConfig.Certificates) != 1 {
+		t.Errorf("Expected 1 certificate, got %d", len(tlsConfig.Certificates))
+	}
+
+	if len(tlsConfig.CipherSuites) == 0 {
+		t.Error("Expected cipher suites to be configured")
+	}
+
+	if len(tlsConfig.CurvePreferences) == 0 {
+		t.Error("Expected curve preferences to be configured")
+	}
+}
+
+func TestCertManager_LoadTLSConfigInvalidCerts(t *testing.T) {
+	tempDir := t.TempDir()
+	certPath := filepath.Join(tempDir, "cert.pem")
+	keyPath := filepath.Join(tempDir, "key.pem")
+
+	logger := logrus.New()
+	logger.SetLevel(logrus.ErrorLevel)
+
+	cm := NewCertManager(certPath, keyPath, logger)
+
+	// Create invalid certificate and key files
+	err := os.WriteFile(certPath, []byte("invalid cert"), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create invalid cert file: %v", err)
+	}
+
+	err = os.WriteFile(keyPath, []byte("invalid key"), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create invalid key file: %v", err)
+	}
+
+	// Test LoadTLSConfig with invalid certificates
+	_, err = cm.LoadTLSConfig()
+	if err == nil {
+		t.Error("Expected error when loading invalid certificates")
+	}
+}
+
+func TestCertManager_GenerateKeyErrors(t *testing.T) {
+	// This test is challenging because generatePrivateKey uses crypto/rand,
+	// but we can test that it generally works by calling it directly
+	tempDir := t.TempDir()
+	logger := logrus.New()
+	logger.SetLevel(logrus.ErrorLevel)
+
+	cm := NewCertManager(filepath.Join(tempDir, "cert.pem"), filepath.Join(tempDir, "key.pem"), logger)
+
+	// Test generatePrivateKey function
+	key, err := cm.generatePrivateKey()
+	if err != nil {
+		t.Errorf("generatePrivateKey failed: %v", err)
+	}
+
+	if key == nil {
+		t.Error("Expected non-nil private key")
+		return
+	}
+
+	// Verify key size is 2048 bits
+	if key.N.BitLen() != 2048 {
+		t.Errorf("Expected 2048-bit key, got %d bits", key.N.BitLen())
+	}
+}
+
+func TestCertManager_ExpiredCertificate(t *testing.T) {
+	tempDir := t.TempDir()
+	certPath := filepath.Join(tempDir, "cert.pem")
+	keyPath := filepath.Join(tempDir, "key.pem")
+
+	logger := logrus.New()
+	logger.SetLevel(logrus.ErrorLevel)
+
+	cm := NewCertManager(certPath, keyPath, logger)
+
+	// Generate certificate that's already expired (negative validity period)
+	err := cm.GenerateSelfSignedCert("localhost", -1)
+	if err != nil {
+		t.Fatalf("Failed to generate expired certificate: %v", err)
+	}
+
+	// Test ValidateCertificates with expired certificate
+	err = cm.ValidateCertificates()
+	if err == nil {
+		t.Error("Expected error when validating expired certificate")
+	}
+
+	// GetCertificateInfo should still work even with expired certs
+	info, err := cm.GetCertificateInfo()
+	if err != nil {
+		t.Errorf("GetCertificateInfo should work with expired certs: %v", err)
+	}
+
+	if info == nil {
+		t.Error("Expected certificate info for expired cert")
+	}
+
+	// Verify that info contains expected fields
+	expectedFields := []string{"subject", "issuer", "not_before", "not_after", "dns_names", "ip_addresses", "is_ca"}
+	for _, field := range expectedFields {
+		if _, exists := info[field]; !exists {
+			t.Errorf("Expected field %s in certificate info", field)
+		}
+	}
+}

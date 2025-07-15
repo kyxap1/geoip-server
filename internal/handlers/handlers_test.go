@@ -17,10 +17,14 @@ import (
 
 // MockDatabaseManager implements a mock database manager for testing
 type MockDatabaseManager struct {
-	logger *logrus.Logger
+	logger            *logrus.Logger
+	ShouldReturnError bool
 }
 
 func (m *MockDatabaseManager) GetGeoIPInfo(ip string) (*types.GeoIPInfo, error) {
+	if m.ShouldReturnError {
+		return nil, fmt.Errorf("mock database error")
+	}
 	return &types.GeoIPInfo{
 		IP:          ip,
 		Country:     "United States",
@@ -1010,4 +1014,477 @@ func (m *ErrorMockDatabaseManager) GetCacheStats() map[string]interface{} {
 
 func (m *ErrorMockDatabaseManager) Close() error {
 	return fmt.Errorf("close error")
+}
+
+// Test error handling in sendJSONError, sendXMLError, sendCSVError
+func TestAPIHandler_ErrorResponses(t *testing.T) {
+	mockDB := &MockDatabaseManager{}
+	logger := logrus.New()
+	logger.SetLevel(logrus.ErrorLevel)
+	handler := NewAPIHandler(mockDB, logger)
+
+	t.Run("sendJSONError", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		handler.sendJSONError(w, http.StatusBadRequest, "test error message")
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected status %d, got %d", http.StatusBadRequest, w.Code)
+		}
+
+		if w.Header().Get("Content-Type") != "application/json" {
+			t.Error("Expected Content-Type: application/json")
+		}
+
+		var errorResp ErrorResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &errorResp); err != nil {
+			t.Fatalf("Failed to unmarshal error response: %v", err)
+		}
+
+		if errorResp.Status != http.StatusBadRequest {
+			t.Errorf("Expected status %d in response, got %d", http.StatusBadRequest, errorResp.Status)
+		}
+
+		if errorResp.Message != "test error message" {
+			t.Errorf("Expected message 'test error message', got '%s'", errorResp.Message)
+		}
+
+		if errorResp.Error != http.StatusText(http.StatusBadRequest) {
+			t.Errorf("Expected error '%s', got '%s'", http.StatusText(http.StatusBadRequest), errorResp.Error)
+		}
+	})
+
+	t.Run("sendXMLError", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		handler.sendXMLError(w, http.StatusInternalServerError, "internal error")
+
+		if w.Code != http.StatusInternalServerError {
+			t.Errorf("Expected status %d, got %d", http.StatusInternalServerError, w.Code)
+		}
+
+		if w.Header().Get("Content-Type") != "application/xml" {
+			t.Error("Expected Content-Type: application/xml")
+		}
+
+		body := w.Body.String()
+		if !strings.Contains(body, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>") {
+			t.Error("Expected XML header in response")
+		}
+
+		if !strings.Contains(body, "internal error") {
+			t.Error("Expected error message in XML response")
+		}
+
+		if !strings.Contains(body, "<status>500</status>") {
+			t.Error("Expected status code in XML response")
+		}
+	})
+
+	t.Run("sendCSVError", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		handler.sendCSVError(w, http.StatusNotFound, "resource not found")
+
+		if w.Code != http.StatusNotFound {
+			t.Errorf("Expected status %d, got %d", http.StatusNotFound, w.Code)
+		}
+
+		if w.Header().Get("Content-Type") != "text/plain" {
+			t.Error("Expected Content-Type: text/plain")
+		}
+
+		body := w.Body.String()
+		if !strings.Contains(body, "Error: Not Found") {
+			t.Error("Expected 'Error: Not Found' in CSV response")
+		}
+
+		if !strings.Contains(body, "Message: resource not found") {
+			t.Error("Expected error message in CSV response")
+		}
+
+		if !strings.Contains(body, "Status: 404") {
+			t.Error("Expected status code in CSV response")
+		}
+	})
+}
+
+// Test HealthHandler error scenarios
+func TestAPIHandler_HealthHandlerErrors(t *testing.T) {
+	mockDB := &MockDatabaseManager{}
+	logger := logrus.New()
+	logger.SetLevel(logrus.ErrorLevel)
+	handler := NewAPIHandler(mockDB, logger)
+
+	// Test normal health check
+	t.Run("Normal health check", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/health", nil)
+		w := httptest.NewRecorder()
+
+		handler.HealthHandler(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
+		}
+
+		if w.Header().Get("Content-Type") != "application/json" {
+			t.Error("Expected Content-Type: application/json")
+		}
+
+		var response map[string]string
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatalf("Failed to unmarshal health response: %v", err)
+		}
+
+		if response["status"] != "healthy" {
+			t.Errorf("Expected status 'healthy', got '%s'", response["status"])
+		}
+
+		if response["timestamp"] == "" {
+			t.Error("Expected timestamp in health response")
+		}
+	})
+}
+
+// Test StatsHandler error scenarios
+func TestAPIHandler_StatsHandlerErrors(t *testing.T) {
+	mockDB := &MockDatabaseManager{}
+	logger := logrus.New()
+	logger.SetLevel(logrus.ErrorLevel)
+	handler := NewAPIHandler(mockDB, logger)
+
+	// Test normal stats request
+	t.Run("Normal stats request", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/stats", nil)
+		w := httptest.NewRecorder()
+
+		handler.StatsHandler(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
+		}
+
+		if w.Header().Get("Content-Type") != "application/json" {
+			t.Error("Expected Content-Type: application/json")
+		}
+
+		var stats map[string]interface{}
+		if err := json.Unmarshal(w.Body.Bytes(), &stats); err != nil {
+			t.Fatalf("Failed to unmarshal stats response: %v", err)
+		}
+
+		// Check if stats contain expected fields from mock
+		if _, exists := stats["enabled"]; !exists {
+			t.Error("Expected 'enabled' field in stats response")
+		}
+	})
+}
+
+// Test XMLHandler error scenarios
+func TestAPIHandler_XMLHandlerErrors(t *testing.T) {
+	mockDB := &MockDatabaseManager{}
+	logger := logrus.New()
+	logger.SetLevel(logrus.ErrorLevel)
+	handler := NewAPIHandler(mockDB, logger)
+
+	t.Run("XMLHandler with invalid IP", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/xml/invalid-ip", nil)
+		req = mux.SetURLVars(req, map[string]string{"ip": "invalid-ip"})
+		w := httptest.NewRecorder()
+
+		handler.XMLHandler(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected status %d, got %d", http.StatusBadRequest, w.Code)
+		}
+
+		if w.Header().Get("Content-Type") != "application/xml" {
+			t.Error("Expected Content-Type: application/xml")
+		}
+
+		body := w.Body.String()
+		if !strings.Contains(body, "invalid IP address") {
+			t.Error("Expected invalid IP error message in XML response")
+		}
+	})
+
+	t.Run("XMLHandler with database error", func(t *testing.T) {
+		mockDB.ShouldReturnError = true
+		defer func() { mockDB.ShouldReturnError = false }()
+
+		req := httptest.NewRequest("GET", "/xml/8.8.8.8", nil)
+		req = mux.SetURLVars(req, map[string]string{"ip": "8.8.8.8"})
+		w := httptest.NewRecorder()
+
+		handler.XMLHandler(w, req)
+
+		if w.Code != http.StatusInternalServerError {
+			t.Errorf("Expected status %d, got %d", http.StatusInternalServerError, w.Code)
+		}
+
+		body := w.Body.String()
+		if !strings.Contains(body, "Failed to get GeoIP info") {
+			t.Error("Expected database error message in XML response")
+		}
+	})
+
+	t.Run("XMLHandler successful response", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/xml/8.8.8.8", nil)
+		req = mux.SetURLVars(req, map[string]string{"ip": "8.8.8.8"})
+		w := httptest.NewRecorder()
+
+		handler.XMLHandler(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
+		}
+
+		if w.Header().Get("Content-Type") != "application/xml" {
+			t.Error("Expected Content-Type: application/xml")
+		}
+
+		body := w.Body.String()
+		if !strings.Contains(body, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>") {
+			t.Error("Expected XML header in response")
+		}
+
+		if !strings.Contains(body, "<geoip>") {
+			t.Error("Expected geoip XML root element")
+		}
+
+		if !strings.Contains(body, "8.8.8.8") {
+			t.Error("Expected IP address in XML response")
+		}
+	})
+}
+
+// Test CSVHandler error scenarios
+func TestAPIHandler_CSVHandlerErrors(t *testing.T) {
+	mockDB := &MockDatabaseManager{}
+	logger := logrus.New()
+	logger.SetLevel(logrus.ErrorLevel)
+	handler := NewAPIHandler(mockDB, logger)
+
+	t.Run("CSVHandler with invalid IP", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/csv/invalid-ip", nil)
+		req = mux.SetURLVars(req, map[string]string{"ip": "invalid-ip"})
+		w := httptest.NewRecorder()
+
+		handler.CSVHandler(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected status %d, got %d", http.StatusBadRequest, w.Code)
+		}
+
+		if w.Header().Get("Content-Type") != "text/plain" {
+			t.Error("Expected Content-Type: text/plain")
+		}
+
+		body := w.Body.String()
+		if !strings.Contains(body, "invalid IP address") {
+			t.Error("Expected invalid IP error message in CSV response")
+		}
+	})
+
+	t.Run("CSVHandler with database error", func(t *testing.T) {
+		mockDB.ShouldReturnError = true
+		defer func() { mockDB.ShouldReturnError = false }()
+
+		req := httptest.NewRequest("GET", "/csv/8.8.8.8", nil)
+		req = mux.SetURLVars(req, map[string]string{"ip": "8.8.8.8"})
+		w := httptest.NewRecorder()
+
+		handler.CSVHandler(w, req)
+
+		if w.Code != http.StatusInternalServerError {
+			t.Errorf("Expected status %d, got %d", http.StatusInternalServerError, w.Code)
+		}
+
+		body := w.Body.String()
+		if !strings.Contains(body, "Failed to get GeoIP info") {
+			t.Error("Expected database error message in CSV response")
+		}
+	})
+
+	t.Run("CSVHandler successful response", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/csv/8.8.8.8", nil)
+		req = mux.SetURLVars(req, map[string]string{"ip": "8.8.8.8"})
+		w := httptest.NewRecorder()
+
+		handler.CSVHandler(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
+		}
+
+		if w.Header().Get("Content-Type") != "text/csv" {
+			t.Error("Expected Content-Type: text/csv")
+		}
+
+		body := w.Body.String()
+		lines := strings.Split(strings.TrimSpace(body), "\n")
+		if len(lines) < 2 {
+			t.Error("Expected at least header and data rows in CSV response")
+		}
+
+		// Check header
+		if !strings.Contains(lines[0], "ip,country,country_code") {
+			t.Error("Expected CSV headers in first line")
+		}
+
+		// Check data
+		if !strings.Contains(lines[1], "8.8.8.8") {
+			t.Error("Expected IP address in CSV data")
+		}
+	})
+}
+
+// Test middleware with different request types
+func TestAPIHandler_MiddlewareEdgeCases(t *testing.T) {
+	mockDB := &MockDatabaseManager{}
+	logger := logrus.New()
+	logger.SetLevel(logrus.ErrorLevel)
+	handler := NewAPIHandler(mockDB, logger)
+
+	t.Run("OPTIONS request", func(t *testing.T) {
+		req := httptest.NewRequest("OPTIONS", "/", nil)
+		w := httptest.NewRecorder()
+
+		testHandler := handler.middleware(func(w http.ResponseWriter, r *http.Request) {
+			t.Error("Handler should not be called for OPTIONS request")
+		})
+
+		testHandler(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("Expected status %d for OPTIONS request, got %d", http.StatusOK, w.Code)
+		}
+
+		// Check CORS headers
+		if w.Header().Get("Access-Control-Allow-Origin") != "*" {
+			t.Error("Expected CORS allow origin header")
+		}
+
+		if w.Header().Get("Access-Control-Allow-Methods") != "GET, OPTIONS" {
+			t.Error("Expected CORS allow methods header")
+		}
+	})
+
+	t.Run("Security headers", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		w := httptest.NewRecorder()
+
+		testHandler := handler.middleware(func(w http.ResponseWriter, r *http.Request) {
+			// Handler does nothing, we just check headers
+		})
+
+		testHandler(w, req)
+
+		expectedHeaders := map[string]string{
+			"X-Content-Type-Options":      "nosniff",
+			"X-Frame-Options":             "DENY",
+			"X-XSS-Protection":            "1; mode=block",
+			"Referrer-Policy":             "strict-origin-when-cross-origin",
+			"Content-Security-Policy":     "default-src 'self'",
+			"Access-Control-Allow-Origin": "*",
+		}
+
+		for header, expectedValue := range expectedHeaders {
+			if w.Header().Get(header) != expectedValue {
+				t.Errorf("Expected header %s: %s, got %s", header, expectedValue, w.Header().Get(header))
+			}
+		}
+	})
+}
+
+// Test getClientIP with various header combinations
+func TestAPIHandler_GetClientIPVariations(t *testing.T) {
+	mockDB := &MockDatabaseManager{}
+	logger := logrus.New()
+	logger.SetLevel(logrus.ErrorLevel)
+	handler := NewAPIHandler(mockDB, logger)
+
+	t.Run("X-Forwarded-For with multiple IPs", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("X-Forwarded-For", "1.1.1.1, 2.2.2.2, 3.3.3.3")
+		req.RemoteAddr = "4.4.4.4:1234"
+
+		ip := handler.getClientIP(req)
+		if ip != "1.1.1.1" {
+			t.Errorf("Expected first IP from X-Forwarded-For, got %s", ip)
+		}
+	})
+
+	t.Run("X-Real-IP header", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("X-Real-IP", "5.5.5.5")
+		req.RemoteAddr = "6.6.6.6:1234"
+
+		ip := handler.getClientIP(req)
+		if ip != "5.5.5.5" {
+			t.Errorf("Expected IP from X-Real-IP, got %s", ip)
+		}
+	})
+
+	t.Run("RemoteAddr without port", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "7.7.7.7"
+
+		ip := handler.getClientIP(req)
+		if ip != "7.7.7.7" {
+			t.Errorf("Expected IP from RemoteAddr, got %s", ip)
+		}
+	})
+
+	t.Run("RemoteAddr with port", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "8.8.8.8:5678"
+
+		ip := handler.getClientIP(req)
+		if ip != "8.8.8.8" {
+			t.Errorf("Expected IP from RemoteAddr without port, got %s", ip)
+		}
+	})
+}
+
+// Test SetupRoutes more thoroughly
+func TestAPIHandler_SetupRoutesRoutes(t *testing.T) {
+	mockDB := &MockDatabaseManager{}
+	logger := logrus.New()
+	logger.SetLevel(logrus.ErrorLevel)
+	handler := NewAPIHandler(mockDB, logger)
+
+	router := handler.SetupRoutes()
+
+	testCases := []struct {
+		method   string
+		path     string
+		expected int
+	}{
+		{"GET", "/", http.StatusOK},
+		{"GET", "/health", http.StatusOK},
+		{"GET", "/stats", http.StatusOK},
+		{"GET", "/json", http.StatusOK},
+		{"GET", "/json/", http.StatusOK},
+		{"GET", "/json/8.8.8.8", http.StatusOK},
+		{"GET", "/xml", http.StatusOK},
+		{"GET", "/xml/", http.StatusOK},
+		{"GET", "/xml/8.8.8.8", http.StatusOK},
+		{"GET", "/csv", http.StatusOK},
+		{"GET", "/csv/", http.StatusOK},
+		{"GET", "/csv/8.8.8.8", http.StatusOK},
+		{"GET", "/favicon.ico", http.StatusNoContent},
+		{"GET", "/8.8.8.8", http.StatusOK}, // Catch-all IP route
+		{"OPTIONS", "/anything", http.StatusOK},
+	}
+
+	for _, tc := range testCases {
+		t.Run(fmt.Sprintf("%s %s", tc.method, tc.path), func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			if w.Code != tc.expected {
+				t.Errorf("Expected status %d for %s %s, got %d", tc.expected, tc.method, tc.path, w.Code)
+			}
+		})
+	}
 }
